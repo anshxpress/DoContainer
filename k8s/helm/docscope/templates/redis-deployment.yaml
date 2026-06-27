@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "docscope.fullname" . }}-redis
+  labels:
+    {{- include "docscope.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: {{ .Values.redis.ports.port }}
+      targetPort: 6379
+  selector:
+    {{- include "docscope.selectorLabels" . | nindent 4 }}
+    app: redis
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "docscope.fullname" . }}-redis
+  labels:
+    {{- include "docscope.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "docscope.selectorLabels" . | nindent 6 }}
+      app: redis
+  template:
+    metadata:
+      labels:
+        {{- include "docscope.selectorLabels" . | nindent 8 }}
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: "{{ .Values.redis.image }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 6379
+              name: redis

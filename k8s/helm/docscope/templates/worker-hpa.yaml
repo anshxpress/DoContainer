@@ -1,0 +1,23 @@
+{{- if .Values.worker.autoscaling.enabled -}}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "docscope.fullname" . }}-worker-scaler
+  labels:
+    {{- include "docscope.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "docscope.fullname" . }}-worker
+  minReplicaCount: {{ .Values.worker.autoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.worker.autoscaling.maxReplicas }}
+  cooldownPeriod: 300
+  pollingInterval: 15
+  triggers:
+    - type: redis
+      metadata:
+        address: {{ include "docscope.fullname" . }}-redis:6379
+        listName: celery
+        listLength: "{{ .Values.worker.autoscaling.targetQueueLength }}"
+{{- end }}

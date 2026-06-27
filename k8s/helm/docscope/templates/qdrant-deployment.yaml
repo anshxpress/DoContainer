@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "docscope.fullname" . }}-qdrant-pvc
+  labels:
+    {{- include "docscope.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.qdrant.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "docscope.fullname" . }}-qdrant
+  labels:
+    {{- include "docscope.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: {{ .Values.qdrant.ports.port }}
+      targetPort: 6333
+      name: qdrant-http
+  selector:
+    {{- include "docscope.selectorLabels" . | nindent 4 }}
+    app: qdrant
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "docscope.fullname" . }}-qdrant
+  labels:
+    {{- include "docscope.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "docscope.selectorLabels" . | nindent 6 }}
+      app: qdrant
+  template:
+    metadata:
+      labels:
+        {{- include "docscope.selectorLabels" . | nindent 8 }}
+        app: qdrant
+    spec:
+      containers:
+        - name: qdrant
+          image: "{{ .Values.qdrant.image }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 6333
+              name: qdrant-http
+          volumeMounts:
+            - name: qdrant-storage
+              mountPath: /qdrant/storage
+      volumes:
+        - name: qdrant-storage
+          persistentVolumeClaim:
+            claimName: {{ include "docscope.fullname" . }}-qdrant-pvc

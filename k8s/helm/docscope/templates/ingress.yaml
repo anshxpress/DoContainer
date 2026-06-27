@@ -1,0 +1,49 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "docscope.fullname" . }}-ingress
+  labels:
+    {{- include "docscope.labels" . | nindent 4 }}
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /api/v1/.*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "docscope.fullname" . }}-api
+                port:
+                  number: 8001
+          - path: /metrics
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "docscope.fullname" . }}-api
+                port:
+                  number: 8001
+          - path: /docs
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "docscope.fullname" . }}-api
+                port:
+                  number: 8001
+          - path: /openapi.json
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "docscope.fullname" . }}-api
+                port:
+                  number: 8001
+          - path: /.*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "docscope.fullname" . }}-frontend
+                port:
+                  number: 80
