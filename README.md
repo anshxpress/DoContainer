@@ -1,4 +1,4 @@
-# DOCSCOPE AI — Enterprise Multimodal Document Intelligence
+# DoContainer — Enterprise Multimodal Document Intelligence
 
 > **AI-powered document search platform** — upload PDFs, Office files, and images; get back semantically matched pages with visual citations, powered by multi-vector embeddings and hybrid retrieval.
 
@@ -385,5 +385,3 @@ docker compose -f k8s\docker-compose.yml down -v
 
 # Backend and Frontend — just close the terminal windows (Ctrl+C)
 ```
-#   D o C o n t a i n e r  
- 
