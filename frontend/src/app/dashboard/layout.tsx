@@ -24,7 +24,7 @@ export default function DashboardLayout({
   if (!authorized) {
     return (
       <div className="flex min-h-screen bg-zinc-950 items-center justify-center text-zinc-500 text-sm animate-pulse">
-        Accessing Docscope workspace...
+        Accessing DoContainer workspace...
       </div>
     );
   }

@@ -256,7 +256,7 @@ export default function ChatPage() {
     {
       id: "welcome",
       role: "assistant",
-      content: "Hello! I'm DOCSCOPE AI. Ask me anything about your uploaded documents. I'll answer with precise citations pointing to the exact pages.\n\nTry: *\"What was the revenue in Q3?\"* or *\"Summarize the vendor agreement terms.\"*",
+      content: "Hello! I'm DoContainer AI. Ask me anything about your uploaded documents. I'll answer with precise citations pointing to the exact pages.\n\nTry: *\"What was the revenue in Q3?\"* or *\"Summarize the vendor agreement terms.\"*",
       citations: [],
     },
   ]);
@@ -310,7 +310,7 @@ export default function ChatPage() {
         ...(sessionId ? { session_id: sessionId } : {}),
       });
 
-      const baseUrl = `http://localhost:8001/api/v1/chat/ask?${params}`;
+      const baseUrl = `http://127.0.0.1:8001/api/v1/chat/ask?${params}`;
       const resp = await fetch(baseUrl, {
         method: "POST",
         headers: {

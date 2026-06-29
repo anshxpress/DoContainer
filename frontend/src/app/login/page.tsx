@@ -81,7 +81,7 @@ export default function LoginPage() {
             <FileSearch2 size={36} className="text-glow" />
           </div>
           <h1 className="text-2xl font-extrabold tracking-wider bg-gradient-to-r from-zinc-100 to-zinc-400 bg-clip-text text-transparent mt-2">
-            DOCSCOPE AI
+            DoContainer AI
           </h1>
           <p className="text-xs text-zinc-500">
             {isRegister ? "Register your enterprise workspace" : "Sign in to your document intelligence portal"}

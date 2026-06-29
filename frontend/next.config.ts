@@ -8,11 +8,11 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/api/v1/:path*",
-        destination: "http://localhost:8001/api/v1/:path*",
+        destination: "http://127.0.0.1:8001/api/v1/:path*",
       },
       {
         source: "/metrics",
-        destination: "http://localhost:8001/metrics",
+        destination: "http://127.0.0.1:8001/metrics",
       },
     ];
   },

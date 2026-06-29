@@ -98,9 +98,9 @@ const MOCK_ANALYTICS = {
     active_users: 48
   },
   recent_audits: [
-    { action: "document.upload", user: "john.doe@docscope.io", time: new Date(Date.now() - 2 * 3600 * 1000).toISOString() },
+    { action: "document.upload", user: "john.doe@docontainer.io", time: new Date(Date.now() - 2 * 3600 * 1000).toISOString() },
     { action: "document.search", user: "system_admin", time: new Date(Date.now() - 5 * 3600 * 1000).toISOString() },
-    { action: "chat.ask", user: "alice@docscope.io", time: new Date(Date.now() - 24 * 3600 * 1000).toISOString() }
+    { action: "chat.ask", user: "alice@docontainer.io", time: new Date(Date.now() - 24 * 3600 * 1000).toISOString() }
   ],
   daily_trends: [
     { date: "Jun 20", tokens: 12000, pages: 120, storage_mb: 250 },
@@ -237,7 +237,7 @@ export default function Dashboard() {
             Workspace Overview
           </h1>
           <p className="text-sm text-zinc-400">
-            Welcome back to <span className="text-emerald-400 font-semibold">Docscope Inc</span>. Monitor your document operations.
+            Welcome back to <span className="text-emerald-400 font-semibold">DoContainer Inc</span>. Monitor your document operations.
           </p>
         </div>
         <div className="flex items-center gap-3">

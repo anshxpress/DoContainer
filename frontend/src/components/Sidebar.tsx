@@ -119,7 +119,7 @@ export default function Sidebar() {
             </div>
             {isOpen && (
               <span className="font-bold text-lg tracking-wider text-glow bg-gradient-to-r from-emerald-400 to-emerald-200 bg-clip-text text-transparent">
-                DOCSCOPE
+                DoContainer AI
               </span>
             )}
           </Link>
@@ -210,8 +210,8 @@ export default function Sidebar() {
             {profileOpen && (
               <div className="absolute bottom-14 left-0 right-0 mx-2 bg-zinc-900 border border-white/10 rounded-2xl p-2.5 shadow-2xl z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
                 <div className="px-2.5 py-1.5 border-b border-white/5 mb-1.5">
-                  <p className="text-xs font-bold text-zinc-300">{profileLoading ? "Loading..." : (userProfile ? userProfile.organization_name : "Docscope Inc")}</p>
-                  <p className="text-[10px] text-zinc-500 truncate">{profileLoading ? "..." : (userProfile ? userProfile.email : "john.doe@docscope.io")}</p>
+                  <p className="text-xs font-bold text-zinc-300">{profileLoading ? "Loading..." : (userProfile ? userProfile.organization_name : "DoContainer Inc")}</p>
+                  <p className="text-[10px] text-zinc-500 truncate">{profileLoading ? "..." : (userProfile ? userProfile.email : "john.doe@docontainer.io")}</p>
                 </div>
                 <button className="w-full flex items-center gap-2.5 px-2.5 py-2 text-xs text-zinc-400 hover:text-emerald-400 hover:bg-white/5 rounded-lg transition-colors">
                   <User size={14} />

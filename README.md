@@ -25,7 +25,51 @@
 
 ## Project Overview
 
-DOCSCOPE AI is a multi-tenant SaaS platform that lets organizations upload documents (PDF, Word, Excel, images), automatically processes and indexes them into a multi-vector database, and provides a hybrid semantic + keyword search API that returns visually matched pages with presigned image URLs.
+**DoContainer** is an enterprise-grade document intelligence platform that transforms traditional document storage into an intelligent, secure, and searchable organizational knowledge base. Instead of relying on filenames, folders, or exact keyword searches, DoContainer understands the semantic meaning, structure, and visual content of documents, allowing employees to find information using natural language while respecting enterprise security policies.
+
+The platform is designed for organizations that manage thousands or millions of documents across multiple departments such as Finance, Human Resources, Legal, Engineering, Operations, Research, and Sales. Every uploaded document is automatically processed, indexed, and enriched using AI so that employees can retrieve the right information in seconds without manually browsing complex folder structures.
+
+### Problem Statement
+
+Large organizations face significant challenges managing enterprise documents:
+
+- Millions of files distributed across departments.
+- Deep folder hierarchies that are difficult to navigate.
+- Duplicate documents and inconsistent file naming.
+- Scanned PDFs that cannot be searched effectively.
+- Knowledge locked inside reports, contracts, presentations, and manuals.
+- Employees spending valuable time searching instead of working.
+- Sensitive documents requiring strict access control.
+
+Traditional document management systems rely on filenames and metadata, making it difficult to discover information when users do not know where a document is stored.
+
+DoContainer solves this by converting every document into an intelligent knowledge asset.
+
+### Solution
+
+DoContainer combines document parsing, OCR, multimodal AI, semantic retrieval, and enterprise-grade security into a single platform.
+
+Every uploaded document is automatically:
+
+- Validated and secured
+- Parsed into structured content
+- OCR processed when required
+- Converted into semantic and visual embeddings
+- Indexed for fast retrieval
+- Enriched with AI-generated metadata
+- Protected by Role-Based Access Control (RBAC)
+
+Users can search using natural language instead of remembering filenames or folder locations.
+
+**Example queries:**
+
+- *"Show the latest product specification for Project Phoenix."*
+- *"Find all invoices from ABC Corporation."*
+- *"Where is the employee leave policy?"*
+- *"Show the contract signed with XYZ Company."*
+- *"Find documents discussing transformer efficiency."*
+
+DoContainer retrieves only the most relevant documents that the user is authorized to access and generates grounded AI answers with citations.
 
 ---
 

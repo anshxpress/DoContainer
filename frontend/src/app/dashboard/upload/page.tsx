@@ -258,7 +258,7 @@ export default function UploadPage() {
           )}
         </div>
         <p className="text-sm text-zinc-400 mt-1">
-          Upload PDFs, Office files, and images. DOCSCOPE AI will scan, render, and index them automatically.
+          Upload PDFs, Office files, and images. DoContainer AI will scan, render, and index them automatically.
         </p>
       </div>
 

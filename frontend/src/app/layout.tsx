@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "DOCSCOPE AI - Enterprise Multimodal Document Intelligence",
+  title: "DocContainer - Enterprise Multimodal Document Intelligence",
   description: "Secure, multi-tenant vision-based document intelligence and search platform.",
 };
 

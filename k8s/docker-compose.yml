@@ -70,7 +70,8 @@ services:
     command: celery -A backend.app.tasks.celery_app worker -l info -Q ocr-pipeline --concurrency=1
     restart: unless-stopped
     environment:
-      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/docscope
       - QDRANT_URL=http://qdrant:6333
       - S3_ENDPOINT=http://minio:9000
