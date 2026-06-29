@@ -4,6 +4,8 @@ import React, { useState, useEffect, useRef } from "react";
 import { Search, Loader2, FileText, ZoomIn, MessageSquare, X, Filter, Clock, ChevronDown, Folder } from "lucide-react";
 import Link from "next/link";
 
+import { SearchModeToggle, SearchMode } from "@/components/SearchModeToggle";
+
 interface SearchResult {
   page_id: string;
   document_id: string;
@@ -79,8 +81,8 @@ function ZoomOverlay({ result, onClose }: { result: SearchResult; onClose: () =>
         ) : (
           <div className="aspect-[3/4] flex items-center justify-center bg-zinc-900">
             <div className="text-center">
-              <FileText size={48} className="text-zinc-600 mx-auto mb-3" />
-              <p className="text-zinc-500 text-sm">No preview available</p>
+               <FileText size={48} className="text-zinc-600 mx-auto mb-3" />
+               <p className="text-zinc-500 text-sm">No preview available</p>
             </div>
           </div>
         )}
@@ -105,6 +107,7 @@ function ZoomOverlay({ result, onClose }: { result: SearchResult; onClose: () =>
 
 export default function SearchPage() {
   const [query, setQuery] = useState("");
+  const [searchMode, setSearchMode] = useState<SearchMode>("hybrid");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
@@ -149,7 +152,11 @@ export default function SearchPage() {
         return;
       }
 
-      const body: Record<string, unknown> = { query: query.trim(), top_k: 20 };
+      const body: Record<string, unknown> = { 
+        query: query.trim(), 
+        top_k: 20,
+        search_mode: searchMode 
+      };
       if (selectedFolderId) body.folder_id = selectedFolderId;
 
       const resp = await fetch("/api/v1/search", {
@@ -187,11 +194,14 @@ export default function SearchPage() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-zinc-100 to-zinc-400 bg-clip-text text-transparent">
-          Visual Search
-        </h1>
-        <p className="text-sm text-zinc-400 mt-1">Semantic + keyword hybrid search across all your documents</p>
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-zinc-100 to-zinc-400 bg-clip-text text-transparent">
+            Visual Search
+          </h1>
+          <p className="text-sm text-zinc-400 mt-1">Semantic + keyword hybrid search across all your documents</p>
+        </div>
+        <SearchModeToggle mode={searchMode} onChange={setSearchMode} />
       </div>
 
       {/* Search Bar */}

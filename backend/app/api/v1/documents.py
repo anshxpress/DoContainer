@@ -12,9 +12,11 @@ from backend.app.api.deps import get_current_user_context, CurrentUserContext, P
 from backend.app.core.db import get_db
 from backend.app.core.s3 import s3_storage
 from backend.app.repositories.base_repo import document_repo
-from backend.app.models.models import DocumentPage
+from backend.app.models.models import DocumentPage, OcrChunk, DocumentSummary, DocumentKeyword, DocumentEntity
 from backend.app.services.validation import validate_file_size, validate_file_type, ValidationError
 from backend.app.tasks.tasks import scan_malware_task, convert_to_pdf_task, render_pages_task, embed_and_index_task
+from backend.app.tasks.ocr_tasks import docling_parse_task, ocr_task, bge_embed_task, metadata_enrichment_task
+from backend.app.schemas.schemas import OcrChunkResponse, DocumentMetadataResponse, KeywordResponse, EntityResponse
 
 logger = logging.getLogger(__name__)
 
@@ -359,3 +361,110 @@ def get_document_pages(
             logger.error(f"Failed to generate presigned URL for page {page.id}: {e}")
             
     return response
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5: Hybrid Pipeline Endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/{doc_id}/ocr", response_model=List[OcrChunkResponse])
+def get_document_ocr(
+    doc_id: uuid.UUID,
+    current_context: CurrentUserContext = Depends(PermissionChecker("documents:read")),
+    db: Session = Depends(get_db)
+):
+    """
+    GET /api/v1/documents/{doc_id}/ocr
+    Retrieves PaddleOCR recognized text regions for the document.
+    """
+    db_doc = document_repo.get(db, id=doc_id)
+    if not db_doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    if str(db_doc.org_id) != current_context.org_id:
+        raise HTTPException(status_code=403, detail="Cross-tenant access not allowed.")
+
+    chunks = db.query(OcrChunk).filter(
+        OcrChunk.document_id == doc_id
+    ).order_by(OcrChunk.page_number, OcrChunk.reading_order).all()
+
+    return chunks
+
+
+@router.get("/{doc_id}/metadata", response_model=DocumentMetadataResponse)
+def get_document_metadata(
+    doc_id: uuid.UUID,
+    current_context: CurrentUserContext = Depends(PermissionChecker("documents:read")),
+    db: Session = Depends(get_db)
+):
+    """
+    GET /api/v1/documents/{doc_id}/metadata
+    Retrieves Gemini Flash generated metadata, summary, entities, and keywords.
+    """
+    db_doc = document_repo.get(db, id=doc_id)
+    if not db_doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    if str(db_doc.org_id) != current_context.org_id:
+        raise HTTPException(status_code=403, detail="Cross-tenant access not allowed.")
+
+    summary_obj = db.query(DocumentSummary).filter(DocumentSummary.document_id == doc_id).first()
+    keywords = db.query(DocumentKeyword).filter(DocumentKeyword.document_id == doc_id).order_by(DocumentKeyword.score.desc()).all()
+    entities = db.query(DocumentEntity).filter(DocumentEntity.document_id == doc_id).all()
+
+    import json
+    topics = []
+    if summary_obj and summary_obj.topics_json:
+        try:
+            topics = json.loads(summary_obj.topics_json)
+        except Exception:
+            pass
+
+    return DocumentMetadataResponse(
+        summary=summary_obj.summary if summary_obj else None,
+        reading_time_minutes=summary_obj.reading_time_minutes if summary_obj else None,
+        complexity_score=summary_obj.complexity_score if summary_obj else None,
+        document_type=summary_obj.document_type if summary_obj else None,
+        topics=topics,
+        category=db_doc.category,
+        department=db_doc.department,
+        keywords=[KeywordResponse.model_validate(k) for k in keywords],
+        entities=[EntityResponse.model_validate(e) for e in entities],
+    )
+
+
+@router.post("/{doc_id}/reprocess", status_code=status.HTTP_202_ACCEPTED)
+def reprocess_document(
+    doc_id: uuid.UUID,
+    pipeline: str = "hybrid",  # "hybrid" or "vision"
+    current_context: CurrentUserContext = Depends(PermissionChecker("documents:write")),
+    db: Session = Depends(get_db)
+):
+    """
+    POST /api/v1/documents/{doc_id}/reprocess
+    Manually triggers either the full ingestion pipeline or just the hybrid pipeline.
+    """
+    db_doc = document_repo.get(db, id=doc_id)
+    if not db_doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    if str(db_doc.org_id) != current_context.org_id:
+        raise HTTPException(status_code=403, detail="Cross-tenant access not allowed.")
+
+    if pipeline == "hybrid":
+        chain(
+            docling_parse_task.si(str(doc_id)),
+            ocr_task.si(str(doc_id)),
+            bge_embed_task.si(str(doc_id)),
+            metadata_enrichment_task.si(str(doc_id))
+        ).apply_async(queue="ocr-pipeline")
+    else:
+        document_repo.update_status(db, doc_id=doc_id, status="queued")
+        chain(
+            scan_malware_task.s(str(doc_id)),
+            convert_to_pdf_task.s(),
+            render_pages_task.s(),
+            embed_and_index_task.s()
+        ).apply_async(queue="ingestion")
+
+    return {"status": "reprocessing_started", "pipeline": pipeline}

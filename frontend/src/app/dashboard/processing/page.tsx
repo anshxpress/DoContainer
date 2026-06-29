@@ -64,7 +64,7 @@ export default function ProcessingDashboard() {
 
     setRetryIds(prev => new Set(prev).add(docId));
     try {
-      const res = await fetch(`/api/v1/documents/${docId}/retry`, {
+      const res = await fetch(`/api/v1/documents/${docId}/reprocess?pipeline=hybrid`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` }
       });

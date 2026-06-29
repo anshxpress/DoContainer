@@ -19,4 +19,9 @@ qdrant-client==1.10.0
 filetype==1.2.0
 clamd==1.0.2
 pypdf==6.14.2
-
+# --- Sprint 5: Hybrid Pipeline Additions ---
+paddleocr==2.7.3
+docling==2.15.1
+FlagEmbedding==1.3.3
+langdetect==1.0.9
+google-genai

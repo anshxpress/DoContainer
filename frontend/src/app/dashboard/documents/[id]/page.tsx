@@ -204,14 +204,24 @@ export default function DocumentViewerPage() {
         </div>
         
         <div className="flex items-center gap-2">
-          <button className="p-2 hover:bg-zinc-900 rounded-lg text-zinc-400 hover:text-white transition-colors">
+          <button 
+            onClick={() => router.push(`/dashboard/documents/${docId}/metadata`)}
+            className="flex items-center gap-2 px-3 py-1.5 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 rounded-lg text-xs font-semibold transition-colors"
+          >
+            <Info size={14} /> AI Metadata
+          </button>
+          <button 
+            onClick={() => router.push(`/dashboard/documents/${docId}/ocr`)}
+            className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 rounded-lg text-xs font-semibold transition-colors"
+          >
+            <Maximize2 size={14} /> Inspect OCR
+          </button>
+          <div className="w-px h-6 bg-white/10 mx-1"></div>
+          <button className="p-2 hover:bg-zinc-900 rounded-lg text-zinc-400 hover:text-white transition-colors" title="Share">
             <Share2 size={18} />
           </button>
-          <button className="p-2 hover:bg-zinc-900 rounded-lg text-zinc-400 hover:text-white transition-colors">
+          <button className="p-2 hover:bg-zinc-900 rounded-lg text-zinc-400 hover:text-white transition-colors" title="Download">
             <Download size={18} />
-          </button>
-          <button className="p-2 hover:bg-zinc-900 rounded-lg text-zinc-400 hover:text-white transition-colors">
-            <Maximize2 size={18} />
           </button>
         </div>
       </div>

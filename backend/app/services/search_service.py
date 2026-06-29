@@ -18,10 +18,12 @@ from typing import List, Optional, Dict, Any
 
 from sqlalchemy.orm import Session
 
-from backend.app.core.qdrant import search_pages
+from backend.app.core.qdrant import search_pages, search_text_chunks
 from backend.app.core.s3 import s3_storage
 from backend.app.repositories.base_repo import document_page_repo
 from backend.app.services.retriever import get_retriever
+from backend.app.services.bge_service import get_bge_service, get_reranker_service
+from backend.app.schemas.schemas import SearchMode
 from opentelemetry import trace
 from backend.app.core.telemetry import tracer
 
@@ -120,74 +122,110 @@ def hybrid_search(
     team_ids: List[str],
     folder_id: Optional[str] = None,
     document_id: Optional[str] = None,
+    search_mode: SearchMode = SearchMode.HYBRID,
     top_k: int = 10,
     k_rrf: int = 60,
     url_expiry_seconds: int = 3600,
 ) -> List[SearchResult]:
     """
-    Day 5 + Day 7: Hybrid Search with RRF and Visual Citations.
+    Day 5 + Day 7 + Sprint 5: Hybrid Search with 3-way RRF, BGE Reranking, and Visual Citations.
     """
     span = trace.get_current_span()
     span.set_attribute("org_id", org_id)
     span.set_attribute("query", query)
+    span.set_attribute("search_mode", search_mode.value)
 
     if not query or not query.strip():
         return []
 
     retriever = get_retriever()
+    bge_service = get_bge_service()
+    reranker_service = get_reranker_service()
+
+    qdrant_ranked: List[str] = []
+    text_ranked: List[str] = []
+    fts_ranked: List[str] = []
 
     # -------------------------------------------------------------------------
-    # Step 1: Generate multi-vector query embedding
+    # 1. Vision Search (ColQwen2)
     # -------------------------------------------------------------------------
-    try:
-        query_vectors = retriever.embed_query(query)
-    except Exception as exc:
-        logger.error("Retriever.embed_query failed: %s", exc)
-        query_vectors = []
-
-    # -------------------------------------------------------------------------
-    # Step 2: Qdrant multi-vector semantic search
-    # -------------------------------------------------------------------------
-    qdrant_ranked: List[str] = []  # page_id strings, best-first
-    if query_vectors:
+    if search_mode in (SearchMode.HYBRID, SearchMode.VISION):
         try:
-            scored_points = search_pages(
-                query_vectors=query_vectors,
+            query_vectors = retriever.embed_query(query)
+            if query_vectors:
+                scored_points = search_pages(
+                    query_vectors=query_vectors,
+                    org_id=org_id,
+                    team_ids=team_ids,
+                    folder_id=folder_id,
+                    document_id=document_id,
+                    limit=top_k * 2,
+                )
+                qdrant_ranked = [str(sp.id) for sp in scored_points]
+        except Exception as exc:
+            logger.warning("Qdrant vision search failed: %s", exc)
+
+    # -------------------------------------------------------------------------
+    # 2. Text Search (BGE-M3)
+    # -------------------------------------------------------------------------
+    if search_mode in (SearchMode.HYBRID, SearchMode.TEXT):
+        try:
+            dense_query = bge_service.encode_query(query)
+            if dense_query and any(v != 0.0 for v in dense_query):
+                scored_chunks = search_text_chunks(
+                    query_vector=dense_query,
+                    org_id=org_id,
+                    team_ids=team_ids,
+                    folder_id=folder_id,
+                    document_id=document_id,
+                    limit=top_k * 4,
+                )
+                
+                # Fast batched lookup: DocumentPage by (document_id, page_number)
+                doc_ids = list({uuid.UUID(sp.payload["document_id"]) for sp in scored_chunks if "document_id" in sp.payload})
+                if doc_ids:
+                    from backend.app.models.models import DocumentPage
+                    pages = db.query(DocumentPage).filter(
+                        DocumentPage.document_id.in_(doc_ids)
+                    ).all()
+                    
+                    page_map = {(p.document_id, p.page_number): str(p.id) for p in pages}
+                    
+                    for sp in scored_chunks:
+                        try:
+                            d_uuid = uuid.UUID(sp.payload["document_id"])
+                            p_num = sp.payload.get("page_number", 1)
+                            page_id_str = page_map.get((d_uuid, p_num))
+                            if page_id_str and page_id_str not in text_ranked:
+                                text_ranked.append(page_id_str)
+                        except Exception:
+                            continue
+        except Exception as exc:
+            logger.warning("Qdrant text chunk search failed: %s", exc)
+
+    # -------------------------------------------------------------------------
+    # 3. Keyword Search (FTS)
+    # -------------------------------------------------------------------------
+    if search_mode in (SearchMode.HYBRID, SearchMode.KEYWORD):
+        try:
+            fts_pages = document_page_repo.search_pages_fts(
+                db,
                 org_id=org_id,
                 team_ids=team_ids,
+                query_text=query,
                 folder_id=folder_id,
                 document_id=document_id,
-                limit=top_k * 2,  # fetch extra so RRF has more to blend
+                limit=top_k * 2,
             )
-            qdrant_ranked = [str(sp.id) for sp in scored_points]
-            logger.debug("Qdrant returned %d results for query '%s'", len(qdrant_ranked), query)
+            fts_ranked = [str(p.id) for p in fts_pages]
         except Exception as exc:
-            logger.warning("Qdrant search failed: %s — skipping vision results.", exc)
+            logger.warning("FTS search failed: %s", exc)
 
     # -------------------------------------------------------------------------
-    # Step 3: PostgreSQL full-text keyword search
-    # -------------------------------------------------------------------------
-    fts_ranked: List[str] = []
-    try:
-        fts_pages = document_page_repo.search_pages_fts(
-            db,
-            org_id=org_id,
-            team_ids=team_ids,
-            query_text=query,
-            folder_id=folder_id,
-            document_id=document_id,
-            limit=top_k * 2,
-        )
-        fts_ranked = [str(p.id) for p in fts_pages]
-        logger.debug("FTS returned %d results for query '%s'", len(fts_ranked), query)
-    except Exception as exc:
-        logger.warning("FTS search failed: %s — skipping keyword results.", exc)
-
-    # -------------------------------------------------------------------------
-    # Step 4: Reciprocal Rank Fusion
+    # 4. Reciprocal Rank Fusion (3-way)
     # -------------------------------------------------------------------------
     fused_scores = _reciprocal_rank_fusion(
-        ranked_lists=[qdrant_ranked, fts_ranked],
+        ranked_lists=[qdrant_ranked, text_ranked, fts_ranked],
         k=k_rrf,
     )
 
@@ -195,33 +233,52 @@ def hybrid_search(
         logger.info("No results found for query '%s'", query)
         return []
 
-    # Sort by fused score descending, take top_k
-    top_ids_scores = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
+    # Fetch top ~20 candidates for reranking
+    candidates = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)[:max(top_k, 20)]
+    
+    pages_dict = {}
+    for pid, _ in candidates:
+        try:
+            page = document_page_repo.get(db, id=uuid.UUID(pid))
+            if page and page.document:
+                pages_dict[pid] = page
+        except Exception:
+            pass
 
     # -------------------------------------------------------------------------
-    # Step 5-7: Fetch page details and generate presigned URLs
+    # 5. Cross-Encoder Reranking
+    # -------------------------------------------------------------------------
+    if search_mode in (SearchMode.HYBRID, SearchMode.TEXT) and pages_dict:
+        try:
+            passages = [pages_dict[pid].text_content or "" for pid, _ in candidates if pid in pages_dict]
+            reranked_scores = reranker_service.rerank(query, passages)
+            
+            reranked_results = []
+            valid_idx = 0
+            for pid, original_score in candidates:
+                if pid in pages_dict:
+                    score = reranked_scores[valid_idx]
+                    reranked_results.append((pid, score))
+                    valid_idx += 1
+            
+            top_ids_scores = sorted(reranked_results, key=lambda x: x[1], reverse=True)[:top_k]
+        except Exception as exc:
+            logger.warning("Reranking failed, falling back to RRF: %s", exc)
+            top_ids_scores = candidates[:top_k]
+    else:
+        top_ids_scores = candidates[:top_k]
+
+    # -------------------------------------------------------------------------
+    # 6. Build Results
     # -------------------------------------------------------------------------
     results: List[SearchResult] = []
     for page_id_str, score in top_ids_scores:
-        try:
-            page_uuid = uuid.UUID(page_id_str)
-        except ValueError:
-            logger.warning("Invalid page UUID in fused results: %s", page_id_str)
+        if page_id_str not in pages_dict:
             continue
-
-        page = document_page_repo.get(db, id=page_uuid)
-        if not page:
-            logger.debug("Page %s not found in DB (may have been deleted)", page_id_str)
-            continue
-
+        page = pages_dict[page_id_str]
         doc = page.document
-        if not doc:
-            continue
-
-        # Generate presigned URL (Day 7)
+        
         signed_url = _get_presigned_url(page.png_storage_path, expiry=url_expiry_seconds)
-
-        # Text snippet (first 200 chars)
         snippet = (page.text_content or "")[:200]
 
         results.append(

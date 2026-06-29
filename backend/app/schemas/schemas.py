@@ -45,12 +45,22 @@ class Token(BaseModel):
 # Day 8: Search Schemas
 # ---------------------------------------------------------------------------
 
+from enum import Enum
+
+class SearchMode(str, Enum):
+    HYBRID = "hybrid"
+    VISION = "vision"
+    TEXT = "text"
+    KEYWORD = "keyword"
+
 class SearchRequest(BaseModel):
     """Input payload for POST /api/v1/search."""
     query: str = Field(..., min_length=1, max_length=1000, description="Natural-language search query")
+    search_mode: SearchMode = Field(default=SearchMode.HYBRID, description="Search mode to use")
     folder_id: Optional[uuid.UUID] = Field(None, description="Optional folder UUID to narrow search scope")
     document_id: Optional[uuid.UUID] = Field(None, description="Optional document UUID to narrow search scope")
     top_k: int = Field(default=10, ge=1, le=100, description="Maximum number of results to return")
+
 
 
 class SearchResult(BaseModel):
@@ -100,4 +110,44 @@ class UserProfileResponse(BaseModel):
     organization_name: str
     role: str
 
+# ---------------------------------------------------------------------------
+# Sprint 5: Hybrid Pipeline Schemas
+# ---------------------------------------------------------------------------
 
+class KeywordResponse(BaseModel):
+    keyword: str
+    score: float
+
+    class Config:
+        from_attributes = True
+
+class EntityResponse(BaseModel):
+    entity_text: str
+    entity_type: str
+
+    class Config:
+        from_attributes = True
+
+class DocumentMetadataResponse(BaseModel):
+    summary: Optional[str] = None
+    reading_time_minutes: Optional[int] = None
+    complexity_score: Optional[float] = None
+    document_type: Optional[str] = None
+    topics: List[str] = Field(default_factory=list)
+    keywords: List[KeywordResponse] = Field(default_factory=list)
+    entities: List[EntityResponse] = Field(default_factory=list)
+    category: Optional[str] = None
+    department: Optional[str] = None
+
+class OcrChunkResponse(BaseModel):
+    id: uuid.UUID
+    page_number: int
+    text: str
+    confidence: float
+    bbox_x0: Optional[float] = None
+    bbox_y0: Optional[float] = None
+    bbox_x1: Optional[float] = None
+    bbox_y1: Optional[float] = None
+
+    class Config:
+        from_attributes = True

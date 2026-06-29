@@ -171,13 +171,25 @@ class Document(Base):
     file_type: Mapped[str] = mapped_column(String(50), nullable=False)
     file_size: Mapped[int] = mapped_column(nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Hybrid Pipeline: metadata enrichment fields
+    category: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    department: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    # Relationships
+    # Relationships (existing)
     organization: Mapped["Organization"] = relationship()
     folder: Mapped[Optional["Folder"]] = relationship()
     pages: Mapped[List["DocumentPage"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+    # Relationships (Hybrid Pipeline — NEW)
+    parse_elements: Mapped[List["DocumentParseElement"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+    ocr_chunks: Mapped[List["OcrChunk"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+    text_embedding_chunks: Mapped[List["TextEmbeddingChunk"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+    summary: Mapped[Optional["DocumentSummary"]] = relationship(back_populates="document", uselist=False, cascade="all, delete-orphan")
+    keywords: Mapped[List["DocumentKeyword"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+    entities: Mapped[List["DocumentEntity"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+    processing_jobs: Mapped[List["ProcessingJob"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+
 
 
 class DocumentPage(Base):
@@ -311,3 +323,194 @@ class UsageMetric(Base):
         {"postgresql_partition_by": "RANGE (created_at)"}
     )
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hybrid Pipeline — Docling Structural Elements
+# ─────────────────────────────────────────────────────────────────────────────
+
+class DocumentParseElement(Base):
+    """
+    Stores the structured elements extracted by Docling from each document.
+    Preserves reading order, bounding boxes, and element type (heading,
+    paragraph, table, image, figure, caption, list, header, footer).
+    """
+    __tablename__ = "document_parse_elements"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    page_number: Mapped[int] = mapped_column(nullable=False)
+    element_type: Mapped[str] = mapped_column(String(50), nullable=False)  # heading/paragraph/table/image/figure/list/caption/header/footer
+    content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reading_order: Mapped[int] = mapped_column(nullable=False, default=0)
+    # Normalized bounding box (0.0 – 1.0 relative to page dimensions)
+    bbox_x0: Mapped[Optional[float]] = mapped_column(nullable=True)
+    bbox_y0: Mapped[Optional[float]] = mapped_column(nullable=True)
+    bbox_x1: Mapped[Optional[float]] = mapped_column(nullable=True)
+    bbox_y1: Mapped[Optional[float]] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    document: Mapped["Document"] = relationship(back_populates="parse_elements")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hybrid Pipeline — PaddleOCR Chunks
+# ─────────────────────────────────────────────────────────────────────────────
+
+class OcrChunk(Base):
+    """
+    Stores OCR-recognized text blocks from PaddleOCR.
+    Each row is one detected text region on a page, with its bounding box,
+    confidence score, detected language, and reading order position.
+    """
+    __tablename__ = "ocr_chunks"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    page_number: Mapped[int] = mapped_column(nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float] = mapped_column(nullable=False, default=1.0)
+    language: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # ISO 639-1 code
+    # Normalized bounding box (0.0 – 1.0 relative to page dimensions)
+    bbox_x0: Mapped[Optional[float]] = mapped_column(nullable=True)
+    bbox_y0: Mapped[Optional[float]] = mapped_column(nullable=True)
+    bbox_x1: Mapped[Optional[float]] = mapped_column(nullable=True)
+    bbox_y1: Mapped[Optional[float]] = mapped_column(nullable=True)
+    reading_order: Mapped[int] = mapped_column(nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    document: Mapped["Document"] = relationship(back_populates="ocr_chunks")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hybrid Pipeline — BGE-M3 Text Embedding Chunks
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TextEmbeddingChunk(Base):
+    """
+    Tracks every text chunk encoded by BGE-M3 and upserted to the
+    Qdrant 'text_chunks' collection. Maintains a pointer (qdrant_point_id)
+    for deletion and re-indexing operations.
+    """
+    __tablename__ = "text_embedding_chunks"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    folder_id: Mapped[Optional[uuid.UUID]] = mapped_column(nullable=True)
+    page_number: Mapped[Optional[int]] = mapped_column(nullable=True)
+    chunk_index: Mapped[int] = mapped_column(nullable=False, default=0)  # within-page ordering
+    chunk_type: Mapped[str] = mapped_column(String(50), nullable=False)  # paragraph/heading/table/ocr/section
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    qdrant_point_id: Mapped[Optional[uuid.UUID]] = mapped_column(nullable=True)
+    language: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    version: Mapped[int] = mapped_column(nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    document: Mapped["Document"] = relationship(back_populates="text_embedding_chunks")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hybrid Pipeline — AI-Generated Document Summaries
+# ─────────────────────────────────────────────────────────────────────────────
+
+class DocumentSummary(Base):
+    """
+    Stores the Gemini Flash-generated summary and document-level metadata
+    such as reading time estimate and a complexity score (0.0 – 1.0).
+    One row per document (UNIQUE constraint on document_id).
+    """
+    __tablename__ = "document_summaries"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reading_time_minutes: Mapped[Optional[int]] = mapped_column(nullable=True)
+    complexity_score: Mapped[Optional[float]] = mapped_column(nullable=True)  # 0.0 (simple) – 1.0 (complex)
+    language: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    document_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)  # contract/report/research/invoice/etc.
+    topics_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array of topic strings
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    document: Mapped["Document"] = relationship(back_populates="summary")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hybrid Pipeline — Document Keywords
+# ─────────────────────────────────────────────────────────────────────────────
+
+class DocumentKeyword(Base):
+    """
+    Stores extracted keywords with relevance scores (TF-IDF / LLM-ranked).
+    Multiple rows per document, one per keyword.
+    """
+    __tablename__ = "document_keywords"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    keyword: Mapped[str] = mapped_column(String(255), nullable=False)
+    score: Mapped[Optional[float]] = mapped_column(nullable=True)  # 0.0 – 1.0 relevance
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    document: Mapped["Document"] = relationship(back_populates="keywords")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hybrid Pipeline — Named Entities
+# ─────────────────────────────────────────────────────────────────────────────
+
+class DocumentEntity(Base):
+    """
+    Stores named entities extracted from the document.
+    Entity types: PERSON, ORG, DATE, MONEY, LOCATION, PRODUCT, LAW, etc.
+    """
+    __tablename__ = "document_entities"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    entity_text: Mapped[str] = mapped_column(String(500), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(100), nullable=False)  # PERSON/ORG/DATE/MONEY/LOCATION/PRODUCT/LAW
+    page_number: Mapped[Optional[int]] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    document: Mapped["Document"] = relationship(back_populates="entities")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hybrid Pipeline — Processing Job Registry
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ProcessingJob(Base):
+    """
+    Tracks the status of each background Celery task in the hybrid pipeline.
+    Used by the Processing Dashboard to show per-document, per-stage progress.
+    Stores timing metrics for observability.
+    """
+    __tablename__ = "processing_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    job_type: Mapped[str] = mapped_column(String(100), nullable=False)  # docling_parse/ocr/bge_embed/metadata_enrichment
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="queued")  # queued/running/completed/failed
+    celery_task_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # JSON blob: {"duration_ms": 1234, "pages_processed": 5, "chunks_created": 42}
+    metrics_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    document: Mapped["Document"] = relationship(back_populates="processing_jobs")

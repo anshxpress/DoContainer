@@ -24,6 +24,10 @@ celery_app.conf.update(
     task_track_started=True,
     task_time_limit=3600, # 1 hour max time limit
     task_default_queue="default",
+    task_routes={
+        "backend.app.tasks.tasks.*": {"queue": "ingestion"},
+        "backend.app.tasks.ocr_tasks.*": {"queue": "ocr-pipeline"},
+    }
 )
 
 # Setup logger configuration for Celery worker

@@ -514,7 +514,33 @@ def embed_and_index_task(self, prev_result: Dict[str, Any], document_id: str) ->
         document_repo.update_status(db, doc_id=doc_uuid, status="completed")
         db.commit()
         logger.info(f"Appended ingestion pipeline completed successfully for document {document_id}.")
-        
+
+        # ─────────────────────────────────────────────────────────────────────
+        # Hybrid Pipeline: Fire the OCR + BGE-M3 + Metadata chain after the
+        # existing vision pipeline completes. Runs independently on the
+        # 'ocr-pipeline' queue so failures here don't affect vision search.
+        # ─────────────────────────────────────────────────────────────────────
+        try:
+            from celery import chain as celery_chain
+            from backend.app.tasks.ocr_tasks import (
+                docling_parse_task,
+                ocr_task,
+                bge_embed_task,
+                metadata_enrichment_task,
+            )
+            celery_chain(
+                docling_parse_task.si(document_id),
+                ocr_task.si(document_id),
+                bge_embed_task.si(document_id),
+                metadata_enrichment_task.si(document_id),
+            ).apply_async(queue="ocr-pipeline")
+            logger.info(f"OCR pipeline chain queued for document {document_id}.")
+        except Exception as chain_err:
+            logger.warning(
+                f"Failed to queue OCR pipeline chain for document {document_id}: {chain_err}. "
+                "Vision search remains available; text/OCR search will be unavailable."
+            )
+
         return {
             "status": "completed",
             "indexed_points": upserted_points
@@ -539,3 +565,4 @@ def embed_and_index_task(self, prev_result: Dict[str, Any], document_id: str) ->
                 pass
         if db:
             db.close()
+
