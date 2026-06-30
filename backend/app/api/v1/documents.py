@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile,
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from celery import chain
+import time
 
 from backend.app.api.deps import get_current_user_context, CurrentUserContext, PermissionChecker
 from backend.app.core.db import get_db
@@ -83,14 +84,17 @@ async def upload_document(
     s3_key = f"{current_context.org_id}/{doc_id}/{file.filename}"
 
     # 3. Upload to S3
+    t0_s3 = time.time()
     uploaded = s3_storage.upload_fileobj(file.file, s3_key)
     if not uploaded:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to upload file to storage."
         )
+    logger.info(f"S3 Upload took {time.time() - t0_s3:.2f}s")
 
     # 4. Save record to PostgreSQL database
+    t0_db = time.time()
     doc_in = {
         "id": doc_id,
         "org_id": uuid.UUID(current_context.org_id),
@@ -113,6 +117,7 @@ async def upload_document(
             value=float(file_size),
             metadata={"document_id": str(doc_id)}
         )
+        logger.info(f"Database insertion took {time.time() - t0_db:.2f}s")
     except Exception as e:
         logger.error(f"Failed to create document in database: {e}")
         # Clean up uploaded S3 object on DB error

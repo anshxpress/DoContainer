@@ -5,6 +5,7 @@ import shutil
 import logging
 import clamd
 import uuid
+import time
 from typing import Dict, Any, List, Optional
 from pdf2image import convert_from_path
 from PIL import Image
@@ -88,8 +89,10 @@ def scan_malware_task(self, document_id: str, s3_key: str) -> Dict[str, Any]:
         document_repo.update_status(db, doc_id=doc_uuid, status="processing")
         
         try:
+            t0 = time.time()
             s3_obj = s3_storage.client.get_object(Bucket=s3_storage.bucket_name, Key=s3_key)
             file_bytes = s3_obj['Body'].read()
+            logger.info(f"S3 download took {time.time() - t0:.2f}s")
         except Exception as e:
             logger.error(f"Failed to fetch file from S3: {e}")
             # Do not update status to failed here; let retry policy handle temporary failures.
@@ -98,9 +101,11 @@ def scan_malware_task(self, document_id: str, s3_key: str) -> Dict[str, Any]:
 
         # Perform virus check via ClamAV clamd daemon
         try:
+            t0 = time.time()
             cd = clamd.ClamdNetworkSocket(host=settings.CLAMAV_HOST, port=settings.CLAMAV_PORT)
             cd.ping()
             scan_result = cd.scan_stream(file_bytes)
+            logger.info(f"ClamAV scan took {time.time() - t0:.2f}s")
         except Exception as e:
             logger.warning(f"ClamAV daemon connection failed: {e}. Falling back to default clean result for development.")
             scan_result = {"stream": ("OK", None)}
@@ -181,7 +186,9 @@ def convert_to_pdf_task(self, prev_result: Dict[str, Any], document_id: str) -> 
             
             # Download source file
             try:
+                t0 = time.time()
                 s3_storage.client.download_file(s3_storage.bucket_name, s3_key, input_file_path)
+                logger.info(f"S3 download took {time.time() - t0:.2f}s")
             except Exception as e:
                 logger.error(f"Failed to download file from S3: {e}")
                 raise e
@@ -208,7 +215,9 @@ def convert_to_pdf_task(self, prev_result: Dict[str, Any], document_id: str) -> 
                         startupinfo = subprocess.STARTUPINFO()
                         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
+                    t0 = time.time()
                     subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, startupinfo=startupinfo)
+                    logger.info(f"LibreOffice conversion took {time.time() - t0:.2f}s")
                 except subprocess.SubprocessError as e:
                     logger.error(f"LibreOffice conversion failed: {e}")
                     raise e
@@ -285,7 +294,9 @@ def render_pages_task(self, prev_result: Dict[str, Any], document_id: str) -> Di
                 pdf_file_path = os.path.join(temp_dir, "input.pdf")
                 
                 try:
+                    t0 = time.time()
                     s3_storage.client.download_file(s3_storage.bucket_name, pdf_s3_key, pdf_file_path)
+                    logger.info(f"S3 download took {time.time() - t0:.2f}s")
                 except Exception as e:
                     logger.error(f"Failed to download PDF for page rendering: {e}")
                     raise e
@@ -426,7 +437,9 @@ def embed_and_index_task(self, prev_result: Dict[str, Any], document_id: str) ->
             try:
                 temp_dir = tempfile.mkdtemp()
                 pdf_temp_path = os.path.join(temp_dir, "document.pdf")
+                t0 = time.time()
                 s3_storage.client.download_file(s3_storage.bucket_name, pdf_s3_key, pdf_temp_path)
+                logger.info(f"S3 PDF download took {time.time() - t0:.2f}s")
                 
                 from pypdf import PdfReader
                 reader = PdfReader(pdf_temp_path)
@@ -485,11 +498,12 @@ def embed_and_index_task(self, prev_result: Dict[str, Any], document_id: str) ->
                         "png_storage_path": png_path
                     }
                 )
+                t0 = time.time()
                 qdrant_client.upsert(
                     collection_name=collection_name,
                     points=[point]
                 )
-                logger.info(f"Upserted page {page_num} point {qdrant_point_id} to Qdrant collection '{collection_name}'")
+                logger.info(f"Upserted page {page_num} point {qdrant_point_id} to Qdrant collection '{collection_name}' in {time.time() - t0:.2f}s")
             except Exception as qdrant_err:
                 logger.warning(
                     f"Qdrant connection/upsert failed: {qdrant_err}. "

@@ -51,4 +51,5 @@ def config_loggers(*args, **kwds):
 # Autodiscover tasks from app/tasks directory
 celery_app.autodiscover_tasks(["backend.app.tasks"])
 import backend.app.tasks.partition_tasks
+import backend.app.tasks.ocr_tasks
 
