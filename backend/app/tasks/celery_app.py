@@ -27,7 +27,10 @@ celery_app.conf.update(
     task_routes={
         "backend.app.tasks.tasks.*": {"queue": "ingestion"},
         "backend.app.tasks.ocr_tasks.*": {"queue": "ocr-pipeline"},
-    }
+    },
+    worker_prefetch_multiplier=1,
+    task_acks_late=True,
+    worker_max_tasks_per_child=10,
 )
 
 # Setup logger configuration for Celery worker

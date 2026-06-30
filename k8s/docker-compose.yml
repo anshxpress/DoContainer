@@ -79,6 +79,31 @@ services:
       - S3_SECRET_KEY=minioadmin
       - S3_BUCKET_NAME=docscope-documents
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - OCR_PROVIDER=PaddleOCR
+      - TEXT_EMBEDDING_MODEL=BAAI/bge-m3
+      - VISION_MODEL=ColQwen2
+      - RERANK_MODEL=BAAI/bge-reranker-v2-m3
+      - GPU_ENABLED=true
+      - HF_HOME=/models
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+      - paddle_cache:/root/.paddleocr
+      - ai_models:/models
+    deploy:
+      resources:
+        limits:
+          cpus: "8"
+          memory: 8g
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python", "-c", "print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     depends_on:
       db:
         condition: service_healthy
@@ -89,3 +114,6 @@ volumes:
   postgres_data:
   qdrant_data:
   minio_data:
+  huggingface_cache:
+  paddle_cache:
+  ai_models:
