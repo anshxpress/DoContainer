@@ -2,27 +2,6 @@
 
 > **AI-powered document search platform** — upload PDFs, Office files, and images; get back semantically matched pages with visual citations, powered by multi-vector embeddings and hybrid retrieval.
 
----
-
-## Table of Contents
-
-- [Project Overview](#project-overview)
-- [Tech Stack](#tech-stack)
-- [Repository Structure](#repository-structure)
-- [Prerequisites](#prerequisites)
-- [Quick Start](#quick-start)
-  - [1. Start Infrastructure (Docker)](#1-start-infrastructure-docker)
-  - [2. Start the Backend](#2-start-the-backend)
-  - [3. Start the Frontend](#3-start-the-frontend)
-- [Environment Variables](#environment-variables)
-- [Database Migrations](#database-migrations)
-- [API Reference](#api-reference)
-- [Running Tests](#running-tests)
-- [What's Built (Sprint Progress)](#whats-built-sprint-progress)
-- [Stopping Everything](#stopping-everything)
-
----
-
 ## Project Overview
 
 **DoContainer** is an enterprise-grade document intelligence platform that transforms traditional document storage into an intelligent, secure, and searchable organizational knowledge base. Instead of relying on filenames, folders, or exact keyword searches, DoContainer understands the semantic meaning, structure, and visual content of documents, allowing employees to find information using natural language while respecting enterprise security policies.
@@ -70,6 +49,25 @@ Users can search using natural language instead of remembering filenames or fold
 - *"Find documents discussing transformer efficiency."*
 
 DoContainer retrieves only the most relevant documents that the user is authorized to access and generates grounded AI answers with citations.
+
+---
+
+## Table of Contents
+
+- [Project Overview](#project-overview)
+- [Tech Stack](#tech-stack)
+- [Repository Structure](#repository-structure)
+- [Prerequisites](#prerequisites)
+- [Quick Start](#quick-start)
+  - [1. Start Infrastructure (Docker)](#1-start-infrastructure-docker)
+  - [2. Start the Backend](#2-start-the-backend)
+  - [3. Start the Frontend](#3-start-the-frontend)
+- [Environment Variables](#environment-variables)
+- [Database Migrations](#database-migrations)
+- [API Reference](#api-reference)
+- [Running Tests](#running-tests)
+- [What's Built (Sprint Progress)](#whats-built-sprint-progress)
+- [Stopping Everything](#stopping-everything)
 
 ---
 
