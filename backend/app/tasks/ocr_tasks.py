@@ -17,6 +17,8 @@ import logging
 import os
 import tempfile
 import uuid
+import time
+import botocore.exceptions
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -102,7 +104,7 @@ def _simple_chunk_text(text: str, max_tokens: int = 512) -> List[str]:
     name="backend.app.tasks.ocr_tasks.docling_parse_task",
     bind=True,
     max_retries=3,
-    autoretry_for=(Exception,),
+    autoretry_for=(botocore.exceptions.ClientError, botocore.exceptions.ConnectionError, ConnectionError, TimeoutError),
     retry_backoff=True,
     retry_backoff_max=60,
     retry_jitter=True,
@@ -208,7 +210,7 @@ def docling_parse_task(self, document_id: str) -> Dict[str, Any]:
     name="backend.app.tasks.ocr_tasks.ocr_task",
     bind=True,
     max_retries=3,
-    autoretry_for=(Exception,),
+    autoretry_for=(botocore.exceptions.ClientError, botocore.exceptions.ConnectionError, ConnectionError, TimeoutError),
     retry_backoff=True,
     retry_backoff_max=60,
     retry_jitter=True,
@@ -247,44 +249,64 @@ def ocr_task(self, document_id: str) -> Dict[str, Any]:
         ).delete(synchronize_session=False)
         db.flush()
 
-        for page in pages:
-            # Skip pages that already have enough embedded text
-            if not ocr_svc.is_scanned_page(page.text_content):
-                logger.debug(
-                    f"[ocr_task] Page {page.page_number} has embedded text — skipping OCR."
-                )
+        batch_size = 4
+        all_new_chunks = []
+        
+        for i in range(0, len(pages), batch_size):
+            batch_pages = pages[i:i+batch_size]
+            scanned_pages = [p for p in batch_pages if not ocr_svc.is_scanned_page(p.text_content)]
+            if not scanned_pages:
                 continue
 
-            # Download PNG from S3
-            png_local = os.path.join(temp_dir, f"page_{page.page_number}.png")
-            try:
-                s3_storage.client.download_file(
-                    s3_storage.bucket_name, page.png_storage_path, png_local
-                )
-            except Exception as dl_err:
-                logger.warning(
-                    f"[ocr_task] Failed to download page {page.page_number} PNG: {dl_err}. Skipping."
-                )
+            # Batch Download
+            t0_dl = time.time()
+            batch_png_paths = []
+            for page in scanned_pages:
+                png_local = os.path.join(temp_dir, f"page_{page.page_number}.png")
+                try:
+                    s3_storage.client.download_file(
+                        s3_storage.bucket_name, page.png_storage_path, png_local
+                    )
+                    batch_png_paths.append((page.page_number, png_local))
+                except Exception as dl_err:
+                    logger.warning(
+                        f"[ocr_task] Failed to download page {page.page_number} PNG: {dl_err}. Skipping."
+                    )
+            t_dl = time.time() - t0_dl
+            
+            if not batch_png_paths:
                 continue
+            
+            # Batch OCR
+            t0_ocr = time.time()
+            # We map page_paths to their real page numbers for DB tracking
+            for page_num, png_local in batch_png_paths:
+                results = ocr_svc.run_page_ocr(png_local)
+                for chunk in results:
+                    all_new_chunks.append(OcrChunk(
+                        document_id=doc_uuid,
+                        org_id=doc.org_id,
+                        page_number=page_num,
+                        text=chunk.text,
+                        confidence=chunk.confidence,
+                        language=chunk.language,
+                        bbox_x0=chunk.bbox_x0,
+                        bbox_y0=chunk.bbox_y0,
+                        bbox_x1=chunk.bbox_x1,
+                        bbox_y1=chunk.bbox_y1,
+                        reading_order=chunk.reading_order,
+                    ))
+                pages_processed += 1
+            t_ocr = time.time() - t0_ocr
+            logger.info(f"[ocr_task] Batch times for {len(batch_png_paths)} pages: Download {t_dl:.2f}s, OCR {t_ocr:.2f}s")
 
-            results = ocr_svc.run_page_ocr(png_local)
-            pages_processed += 1
-
-            for chunk in results:
-                db.add(OcrChunk(
-                    document_id=doc_uuid,
-                    org_id=doc.org_id,
-                    page_number=page.page_number,
-                    text=chunk.text,
-                    confidence=chunk.confidence,
-                    language=chunk.language,
-                    bbox_x0=chunk.bbox_x0,
-                    bbox_y0=chunk.bbox_y0,
-                    bbox_x1=chunk.bbox_x1,
-                    bbox_y1=chunk.bbox_y1,
-                    reading_order=chunk.reading_order,
-                ))
-                total_chunks += 1
+        t0_db = time.time()
+        if all_new_chunks:
+            db.add_all(all_new_chunks)
+            db.flush()
+            total_chunks = len(all_new_chunks)
+        t_db = time.time() - t0_db
+        logger.info(f"[ocr_task] DB Bulk Insert time for {total_chunks} chunks: {t_db:.2f}s")
 
         metrics = {
             "pages_processed": pages_processed,
@@ -322,7 +344,7 @@ def ocr_task(self, document_id: str) -> Dict[str, Any]:
     name="backend.app.tasks.ocr_tasks.bge_embed_task",
     bind=True,
     max_retries=3,
-    autoretry_for=(Exception,),
+    autoretry_for=(botocore.exceptions.ClientError, botocore.exceptions.ConnectionError, ConnectionError, TimeoutError),
     retry_backoff=True,
     retry_backoff_max=60,
     retry_jitter=True,
@@ -500,7 +522,7 @@ def bge_embed_task(self, document_id: str) -> Dict[str, Any]:
     name="backend.app.tasks.ocr_tasks.metadata_enrichment_task",
     bind=True,
     max_retries=3,
-    autoretry_for=(Exception,),
+    autoretry_for=(botocore.exceptions.ClientError, botocore.exceptions.ConnectionError, ConnectionError, TimeoutError),
     retry_backoff=True,
     retry_backoff_max=60,
     retry_jitter=True,
