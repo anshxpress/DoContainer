@@ -1,0 +1,4 @@
+RUNTIME VALIDATION TEST DOCUMENT
+
+This document is used to verify the hybrid processing pipeline.
+It contains text that should be processed by OCR, Docling, and BGE.

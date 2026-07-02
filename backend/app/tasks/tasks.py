@@ -53,6 +53,27 @@ def dlq_handler(failed_task_name: str, failed_task_id: str, args: List[Any], kwa
         f"DLQ INGESTION: Received failed task '{failed_task_name}' (ID: {failed_task_id}). "
         f"Error Details: {error_msg}"
     )
+    
+    db = SessionLocal()
+    try:
+        from backend.app.models.models import FailedJob
+        failed_job = FailedJob(
+            task_name=failed_task_name,
+            task_id=failed_task_id,
+            args=args,
+            kwargs=kwargs,
+            error=error_msg,
+            stack_trace=error_msg,  # Optional: Pass real traceback if available
+            status="failed"
+        )
+        db.add(failed_job)
+        db.commit()
+    except Exception as exc:
+        logger.error(f"Failed to persist DLQ job to DB: {exc}")
+        db.rollback()
+    finally:
+        db.close()
+
     return {
         "status": "dlq_recorded",
         "failed_task_name": failed_task_name,
@@ -529,31 +550,8 @@ def embed_and_index_task(self, prev_result: Dict[str, Any], document_id: str) ->
         db.commit()
         logger.info(f"Appended ingestion pipeline completed successfully for document {document_id}.")
 
-        # ─────────────────────────────────────────────────────────────────────
-        # Hybrid Pipeline: Fire the OCR + BGE-M3 + Metadata chain after the
-        # existing vision pipeline completes. Runs independently on the
-        # 'ocr-pipeline' queue so failures here don't affect vision search.
-        # ─────────────────────────────────────────────────────────────────────
-        try:
-            from celery import chain as celery_chain
-            from backend.app.tasks.ocr_tasks import (
-                docling_parse_task,
-                ocr_task,
-                bge_embed_task,
-                metadata_enrichment_task,
-            )
-            celery_chain(
-                docling_parse_task.si(document_id),
-                ocr_task.si(document_id),
-                bge_embed_task.si(document_id),
-                metadata_enrichment_task.si(document_id),
-            ).apply_async(queue="ocr-pipeline")
-            logger.info(f"OCR pipeline chain queued for document {document_id}.")
-        except Exception as chain_err:
-            logger.warning(
-                f"Failed to queue OCR pipeline chain for document {document_id}: {chain_err}. "
-                "Vision search remains available; text/OCR search will be unavailable."
-            )
+        # Note: The subsequent tasks (docling, OCR, BGE, metadata) are now orchestrated
+        # dynamically by the adaptive pipeline in documents.py, rather than hardcoded here.
 
         return {
             "status": "completed",

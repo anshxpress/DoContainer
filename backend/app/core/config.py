@@ -87,6 +87,14 @@ class Settings(BaseSettings):
     # ─────────────────────────────────────────────────────────────────────────
     DOCLING_ENABLED: bool = Field(default=True, env="DOCLING_ENABLED")
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Feature Flags for Adaptive Pipeline
+    # ─────────────────────────────────────────────────────────────────────────
+    ENABLE_OCR: bool = Field(default=True, env="ENABLE_OCR")
+    ENABLE_VISION: bool = Field(default=True, env="ENABLE_VISION")
+    ENABLE_RERANKER: bool = Field(default=False, env="ENABLE_RERANKER")
+    ENABLE_CLAMAV: bool = Field(default=True, env="ENABLE_CLAMAV")
+
     class Config:
         case_sensitive = True
         env_file = ".env"

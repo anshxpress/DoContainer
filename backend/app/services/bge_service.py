@@ -36,6 +36,13 @@ class BGEM3Service:
         if self._model is not None:
             return self._model
 
+        # Only load the heavy BGE-M3 model inside a dedicated Celery worker.
+        # In the API process, return None so encode_query returns zero-vectors
+        # instead of OOMing with a 1GB model allocation.
+        import os
+        if not os.environ.get("BGE_WORKER_MODE"):
+            logger.debug("BGE-M3: skipping model load in non-worker process (set BGE_WORKER_MODE=1 in embed worker env)")
+            return None
         try:
             from FlagEmbedding import BGEM3FlagModel
             import torch

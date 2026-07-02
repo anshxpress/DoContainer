@@ -132,7 +132,7 @@ def search_pages(
     org_id: str,
     team_ids: List[str],
     folder_id: Optional[str] = None,
-    document_id: Optional[str] = None,
+    document_ids: Optional[List[str]] = None,
     limit: int = 20,
 ) -> List[ScoredPoint]:
     """
@@ -174,10 +174,10 @@ def search_pages(
             FieldCondition(key="folder_id", match=MatchValue(value=folder_id))
         )
         
-    # Narrow to a specific document when requested
-    if document_id:
+    # Narrow to specific documents when requested
+    if document_ids:
         must_conditions.append(
-            FieldCondition(key="document_id", match=MatchValue(value=document_id))
+            FieldCondition(key="document_id", match=MatchAny(any=document_ids))
         )
 
     payload_filter = Filter(must=must_conditions)
@@ -208,7 +208,7 @@ def search_text_chunks(
     org_id: str,
     team_ids: List[str],
     folder_id: Optional[str] = None,
-    document_id: Optional[str] = None,
+    document_ids: Optional[List[str]] = None,
     chunk_type: Optional[str] = None,
     language: Optional[str] = None,
     limit: int = 20,
@@ -249,9 +249,9 @@ def search_text_chunks(
         must_conditions.append(
             FieldCondition(key="folder_id", match=MatchValue(value=folder_id))
         )
-    if document_id:
+    if document_ids:
         must_conditions.append(
-            FieldCondition(key="document_id", match=MatchValue(value=document_id))
+            FieldCondition(key="document_id", match=MatchAny(any=document_ids))
         )
     if chunk_type:
         must_conditions.append(

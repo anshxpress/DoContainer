@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -38,6 +38,19 @@ class AdminPermissionResponse(BaseModel):
     action: str
     desc: str
     roles: Dict[str, bool]
+
+class FailedJobResponse(BaseModel):
+    id: str
+    task_name: str
+    task_id: str
+    error: str
+    status: str
+    created_at: str
+
+class HardwareResponse(BaseModel):
+    cpu_percent: float
+    memory_percent: float
+    gpu_usage: Optional[float]
 
 # --- Endpoints ---
 
@@ -150,3 +163,156 @@ def get_admin_roles_and_permissions(
         ))
         
     return result
+
+# ---------------------------------------------------------------------------
+# Sprint 6: Observability and Operations Dashboards
+# ---------------------------------------------------------------------------
+
+@router.get("/jobs/status")
+def get_jobs_status(
+    current_context: CurrentUserContext = Depends(PermissionChecker("manage:system")),
+    db: Session = Depends(get_db)
+):
+    """
+    GET /api/v1/admin/jobs/status
+    Retrieves current job queue status from Celery via Redis broker.
+    """
+    try:
+        from backend.app.tasks.celery_app import celery_app
+        # Inspect active, reserved, and scheduled jobs
+        i = celery_app.control.inspect()
+        active = i.active() or {}
+        reserved = i.reserved() or {}
+        
+        active_count = sum(len(tasks) for tasks in active.values())
+        reserved_count = sum(len(tasks) for tasks in reserved.values())
+        
+        # We can also get document status aggregate
+        from backend.app.models.models import Document
+        docs_processing = db.query(Document).filter(Document.status.in_(["queued", "processing"])).count()
+        
+        return {
+            "active_celery_jobs": active_count,
+            "queued_celery_jobs": reserved_count,
+            "documents_processing": docs_processing
+        }
+    except Exception as exc:
+        logger.error(f"Failed to retrieve jobs status: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve jobs status")
+
+@router.get("/jobs/failed", response_model=List[FailedJobResponse])
+def get_failed_jobs(
+    limit: int = 50,
+    current_context: CurrentUserContext = Depends(PermissionChecker("manage:system")),
+    db: Session = Depends(get_db)
+):
+    """
+    GET /api/v1/admin/jobs/failed
+    Retrieves the terminal failures from the Dead Letter Queue database table.
+    """
+    from backend.app.models.models import FailedJob
+    jobs = db.query(FailedJob).order_by(FailedJob.created_at.desc()).limit(limit).all()
+    
+    return [
+        FailedJobResponse(
+            id=str(job.id),
+            task_name=job.task_name,
+            task_id=job.task_id,
+            error=job.error,
+            status=job.status,
+            created_at=job.created_at.isoformat() if job.created_at else ""
+        ) for job in jobs
+    ]
+
+@router.post("/jobs/{failed_job_id}/retry")
+def retry_failed_job(
+    failed_job_id: uuid.UUID,
+    current_context: CurrentUserContext = Depends(PermissionChecker("manage:system")),
+    db: Session = Depends(get_db)
+):
+    """
+    POST /api/v1/admin/jobs/{failed_job_id}/retry
+    Re-queues a failed job from the DLQ back into the Celery pipeline.
+    """
+    from backend.app.models.models import FailedJob
+    from backend.app.tasks.celery_app import celery_app
+    
+    job = db.query(FailedJob).filter(FailedJob.id == failed_job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Failed job not found")
+        
+    if job.status == "retried":
+        raise HTTPException(status_code=400, detail="Job already retried")
+        
+    try:
+        celery_app.send_task(
+            job.task_name,
+            args=job.args or [],
+            kwargs=job.kwargs or {}
+        )
+        job.status = "retried"
+        db.commit()
+        return {"status": "retried", "task_name": job.task_name}
+    except Exception as exc:
+        logger.error(f"Failed to retry job {failed_job_id}: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to re-queue job")
+
+@router.get("/system/hardware", response_model=HardwareResponse)
+def get_system_hardware(
+    current_context: CurrentUserContext = Depends(PermissionChecker("manage:system")),
+):
+    """
+    GET /api/v1/admin/system/hardware
+    Retrieves current hardware utilization metrics for the dashboard.
+    """
+    import psutil
+    gpu_usage = None
+    try:
+        import torch
+        if torch.cuda.is_available():
+            # Use torch memory as proxy for GPU usage
+            gpu_mem = torch.cuda.memory_allocated() / torch.cuda.max_memory_allocated() if torch.cuda.max_memory_allocated() else 0
+            gpu_usage = gpu_mem * 100.0
+    except ImportError:
+        pass
+        
+    return HardwareResponse(
+        cpu_percent=psutil.cpu_percent(interval=0.1),
+        memory_percent=psutil.virtual_memory().percent,
+        gpu_usage=gpu_usage
+    )
+
+@router.get("/pipeline/metrics")
+def get_pipeline_metrics(
+    current_context: CurrentUserContext = Depends(PermissionChecker("manage:system")),
+    db: Session = Depends(get_db)
+):
+    """
+    GET /api/v1/admin/pipeline/metrics
+    Provides a quick view of pipeline durations: OCR, Embedding, and Search Latency.
+    """
+    from backend.app.models.models import ProcessingMetrics
+    from backend.app.repositories.base_repo import search_log_repo
+    
+    try:
+        # Pipeline averages
+        pipeline_stats = db.query(
+            ProcessingMetrics.stage,
+            func.avg(ProcessingMetrics.duration_ms).label('avg_duration')
+        ).filter(ProcessingMetrics.status == 'completed').group_by(ProcessingMetrics.stage).all()
+        
+        # Search latency average
+        search_latency = db.query(
+            func.avg(search_log_repo.model.latency_ms)
+        ).scalar()
+        
+        stages = {row[0]: float(row[1]) for row in pipeline_stats}
+        
+        return {
+            "ocr_time_ms": stages.get("ocr_task", 0.0),
+            "embedding_time_ms": stages.get("embed_and_index_task", 0.0) + stages.get("bge_embed_task", 0.0),
+            "search_latency_ms": float(search_latency or 0.0)
+        }
+    except Exception as exc:
+        logger.error(f"Failed to retrieve pipeline metrics: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve pipeline metrics")

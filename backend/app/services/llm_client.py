@@ -49,6 +49,13 @@ class BaseLLMClient(ABC):
         """
         ...
 
+    @abstractmethod
+    async def expand_query(self, query: str) -> Dict[str, Any]:
+        """
+        Analyze and expand a user query, returning synonyms, intent, filter hints, and suggestions.
+        """
+        ...
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Mock client — no API key required
@@ -80,7 +87,8 @@ class MockLLMClient(BaseLLMClient):
             f"The relevant information appears on the following pages: {ref_str}.\n\n"
             f"{'The page states: ' + snippet[:120] + '...' if snippet else 'The content matches your search criteria.'}\n\n"
             f"Please refer to the highlighted pages in the viewer panel for full visual context. "
-            f"All information is sourced directly from your organization's documents."
+            f"All information is sourced directly from your organization's documents.\n"
+            f"---CITATIONS---\n"
         )
 
         words = answer.split(" ")
@@ -90,10 +98,29 @@ class MockLLMClient(BaseLLMClient):
 
         import json
         citations = [
-            {"doc_name": m.get("doc_name", "Document"), "page_number": m.get("page_number", 1)}
+            {"document_name": m.get("doc_name", "Document"), "page": m.get("page_number", 1), "paragraph": m.get("hierarchy", "General"), "confidence": 0.95}
             for m in page_metadata[:3]
         ]
+        
+        # We also need to emit the JSON block for the mock
+        citations_json_str = json.dumps(citations, indent=2)
+        words_json = citations_json_str.split(" ")
+        for i, word in enumerate(words_json):
+            yield word + (" " if i < len(words_json) - 1 else "")
+            await asyncio.sleep(0.01)
+
         yield json.dumps({"__done__": True, "citations": citations})
+
+    async def expand_query(self, query: str) -> Dict[str, Any]:
+        return self.expand_query_sync(query)
+        
+    def expand_query_sync(self, query: str) -> Dict[str, Any]:
+        return {
+            "expanded_query": f"{query} OR synonym",
+            "intent": "informational",
+            "filters": {},
+            "suggestions": [f"Tell me more about {query}"]
+        }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -174,6 +201,7 @@ class GeminiClient(BaseLLMClient):
 
             import json
             full_response = ""
+            yielding = True
             response = await asyncio.to_thread(
                 lambda: chat.send_message(parts, stream=True)
             )
@@ -181,7 +209,15 @@ class GeminiClient(BaseLLMClient):
                 token = chunk.text
                 if token:
                     full_response += token
-                    yield token
+                    if yielding:
+                        if "---CITATIONS---" in full_response:
+                            yielding = False
+                            # Yield the part before ---CITATIONS--- if any token straddled it
+                            parts_split = token.split("---CITATIONS---")
+                            if parts_split[0]:
+                                yield parts_split[0]
+                        else:
+                            yield token
 
             # Extract and emit citations sentinel
             from backend.app.services.citation_parser import parse_citations
@@ -192,6 +228,38 @@ class GeminiClient(BaseLLMClient):
             logger.error("GeminiClient.stream_answer failed: %s — falling back to mock.", exc)
             async for token in self._fallback.stream_answer(query, page_images, page_metadata, history):
                 yield token
+
+    async def expand_query(self, query: str) -> Dict[str, Any]:
+        import asyncio
+        return await asyncio.to_thread(self.expand_query_sync, query)
+
+    def expand_query_sync(self, query: str) -> Dict[str, Any]:
+        if self._model is None:
+            return self._fallback.expand_query_sync(query)
+
+        prompt = (
+            "You are a search intelligence engine. Analyze this query: '{query}'.\n"
+            "Respond ONLY in valid JSON format with the following keys:\n"
+            "- expanded_query: the original query plus synonyms, acronyms, and abbreviations to improve search.\n"
+            "- intent: 'informational' or 'transactional'.\n"
+            "- filters: a dictionary of extracted document types (e.g., 'document_type': 'Invoice') or empty.\n"
+            "- suggestions: a list of 3 related follow-up search questions.\n"
+        ).replace("{query}", query)
+
+        try:
+            import json
+            response = self._model.generate_content(prompt)
+            text = response.text.strip()
+            if text.startswith("```json"):
+                text = text.replace("```json", "").replace("```", "").strip()
+            elif text.startswith("```"):
+                text = text.replace("```", "").strip()
+                
+            data = json.loads(text)
+            return data
+        except Exception as exc:
+            logger.error("GeminiClient.expand_query_sync failed: %s", exc)
+            return self._fallback.expand_query_sync(query)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -26,7 +26,10 @@ celery_app.conf.update(
     task_default_queue="default",
     task_routes={
         "backend.app.tasks.tasks.*": {"queue": "ingestion"},
-        "backend.app.tasks.ocr_tasks.*": {"queue": "ocr-pipeline"},
+        "backend.app.tasks.ocr_tasks.ocr_task": {"queue": "ocr-pipeline"},
+        "backend.app.tasks.ocr_tasks.docling_parse_task": {"queue": "ocr-pipeline"},
+        "backend.app.tasks.ocr_tasks.bge_embed_task": {"queue": "embed-pipeline"},
+        "backend.app.tasks.ocr_tasks.metadata_enrichment_task": {"queue": "metadata-pipeline"},
     },
     worker_prefetch_multiplier=1,
     task_acks_late=True,

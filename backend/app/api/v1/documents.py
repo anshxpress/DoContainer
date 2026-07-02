@@ -1,6 +1,7 @@
 import os
 import uuid
 import logging
+import hashlib
 from typing import List, Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form
@@ -13,7 +14,7 @@ from backend.app.api.deps import get_current_user_context, CurrentUserContext, P
 from backend.app.core.db import get_db
 from backend.app.core.s3 import s3_storage
 from backend.app.repositories.base_repo import document_repo
-from backend.app.models.models import DocumentPage, OcrChunk, DocumentSummary, DocumentKeyword, DocumentEntity
+from backend.app.models.models import DocumentPage, OcrChunk, DocumentSummary, DocumentKeyword, DocumentEntity, KnowledgeGraphEdge, UserDocumentInteraction
 from backend.app.services.validation import validate_file_size, validate_file_type, ValidationError
 from backend.app.tasks.tasks import scan_malware_task, convert_to_pdf_task, render_pages_task, embed_and_index_task
 from backend.app.tasks.ocr_tasks import docling_parse_task, ocr_task, bge_embed_task, metadata_enrichment_task
@@ -77,6 +78,9 @@ async def upload_document(
 
     # Reset file cursor for uploading
     await file.seek(0)
+    
+    # Calculate file hash
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
 
     # 2. Setup document metadata
     doc_id = uuid.uuid4()
@@ -103,7 +107,8 @@ async def upload_document(
         "storage_path": s3_key,
         "status": "queued",
         "file_type": ext,
-        "file_size": file_size
+        "file_size": file_size,
+        "file_hash": file_hash
     }
 
     try:
@@ -129,15 +134,42 @@ async def upload_document(
 
 
     # 5. Trigger the Celery Ingestion Pipeline
-    # chain: scan_malware -> convert_to_pdf -> render_pages -> embed_and_index
+    from backend.app.services.document_analyzer import DocumentAnalyzer
+    from backend.app.core.config import settings
+
     try:
-        chain(
-            scan_malware_task.s(str(doc_id), s3_key),
-            convert_to_pdf_task.s(str(doc_id)),
-            render_pages_task.s(str(doc_id)),
-            embed_and_index_task.s(str(doc_id))
-        ).apply_async()
-        logger.info(f"Scheduled ingestion pipeline for document {doc_id}.")
+        analyzer = DocumentAnalyzer(file_bytes=file_bytes, file_name=file.filename, file_type=ext)
+        decision = analyzer.analyze()
+        logger.info(f"Document {doc_id} analysis decision: {decision.model_dump_json()}")
+
+        pipeline_tasks = []
+
+        if settings.ENABLE_CLAMAV:
+            pipeline_tasks.append(scan_malware_task.s(str(doc_id), s3_key))
+            first_vision_task = convert_to_pdf_task.s(str(doc_id))
+        else:
+            first_vision_task = convert_to_pdf_task.s({"status": "clean", "s3_key": s3_key}, str(doc_id))
+
+        if decision.run_vision and settings.ENABLE_VISION:
+            pipeline_tasks.append(first_vision_task)
+            pipeline_tasks.append(render_pages_task.s(str(doc_id)))
+            pipeline_tasks.append(embed_and_index_task.s(str(doc_id)))
+
+        if decision.run_docling and settings.DOCLING_ENABLED:
+            pipeline_tasks.append(docling_parse_task.si(str(doc_id)))
+            
+        if decision.run_ocr and settings.ENABLE_OCR:
+            pipeline_tasks.append(ocr_task.si(str(doc_id)))
+            
+        pipeline_tasks.append(metadata_enrichment_task.si(str(doc_id)))
+        pipeline_tasks.append(bge_embed_task.si(str(doc_id)))
+
+        if pipeline_tasks:
+            chain(*pipeline_tasks).apply_async()
+            logger.info(f"Scheduled adaptive ingestion pipeline for document {doc_id}.")
+        else:
+            logger.warning(f"No pipeline tasks selected for document {doc_id}.")
+
     except Exception as exc:
         logger.error(f"Failed to start ingestion pipeline: {exc}")
         # Do not fail request; status remains queued and can be retried or shows queue failure
@@ -239,13 +271,44 @@ def retry_document(
     )
 
     try:
-        chain(
-            scan_malware_task.s(str(doc_id), db_doc.storage_path),
-            convert_to_pdf_task.s(str(doc_id)),
-            render_pages_task.s(str(doc_id)),
-            embed_and_index_task.s(str(doc_id))
-        ).apply_async()
-        logger.info(f"Re-scheduled ingestion pipeline for document {doc_id}.")
+        from backend.app.services.document_analyzer import DocumentAnalyzer
+        from backend.app.core.config import settings
+
+        s3_obj = s3_storage.client.get_object(Bucket=s3_storage.bucket_name, Key=db_doc.storage_path)
+        file_bytes = s3_obj['Body'].read()
+
+        analyzer = DocumentAnalyzer(file_bytes=file_bytes, file_name=db_doc.name, file_type=db_doc.file_type)
+        decision = analyzer.analyze()
+        logger.info(f"Document {doc_id} analysis decision for retry: {decision.model_dump_json()}")
+
+        pipeline_tasks = []
+
+        if settings.ENABLE_CLAMAV:
+            pipeline_tasks.append(scan_malware_task.s(str(doc_id), db_doc.storage_path))
+            first_vision_task = convert_to_pdf_task.s(str(doc_id))
+        else:
+            first_vision_task = convert_to_pdf_task.s({"status": "clean", "s3_key": db_doc.storage_path}, str(doc_id))
+
+        if decision.run_vision and settings.ENABLE_VISION:
+            pipeline_tasks.append(first_vision_task)
+            pipeline_tasks.append(render_pages_task.s(str(doc_id)))
+            pipeline_tasks.append(embed_and_index_task.s(str(doc_id)))
+
+        if decision.run_docling and settings.DOCLING_ENABLED:
+            pipeline_tasks.append(docling_parse_task.si(str(doc_id)))
+            
+        if decision.run_ocr and settings.ENABLE_OCR:
+            pipeline_tasks.append(ocr_task.si(str(doc_id)))
+            
+        pipeline_tasks.append(metadata_enrichment_task.si(str(doc_id)))
+        pipeline_tasks.append(bge_embed_task.si(str(doc_id)))
+
+        if pipeline_tasks:
+            chain(*pipeline_tasks).apply_async()
+            logger.info(f"Re-scheduled adaptive ingestion pipeline for document {doc_id}.")
+        else:
+            logger.warning(f"No pipeline tasks selected for document {doc_id}.")
+
     except Exception as exc:
         logger.error(f"Failed to restart ingestion pipeline: {exc}")
 
@@ -460,16 +523,138 @@ def reprocess_document(
         chain(
             docling_parse_task.si(str(doc_id)),
             ocr_task.si(str(doc_id)),
-            bge_embed_task.si(str(doc_id)),
-            metadata_enrichment_task.si(str(doc_id))
+            metadata_enrichment_task.si(str(doc_id)),
+            bge_embed_task.si(str(doc_id))
         ).apply_async(queue="ocr-pipeline")
     else:
         document_repo.update_status(db, doc_id=doc_id, status="queued")
-        chain(
-            scan_malware_task.s(str(doc_id)),
-            convert_to_pdf_task.s(),
-            render_pages_task.s(),
-            embed_and_index_task.s()
-        ).apply_async(queue="ingestion")
+        
+        try:
+            from backend.app.services.document_analyzer import DocumentAnalyzer
+            from backend.app.core.config import settings
+
+            s3_obj = s3_storage.client.get_object(Bucket=s3_storage.bucket_name, Key=db_doc.storage_path)
+            file_bytes = s3_obj['Body'].read()
+
+            analyzer = DocumentAnalyzer(file_bytes=file_bytes, file_name=db_doc.name, file_type=db_doc.file_type)
+            decision = analyzer.analyze()
+
+            pipeline_tasks = []
+
+            if settings.ENABLE_CLAMAV:
+                pipeline_tasks.append(scan_malware_task.s(str(doc_id), db_doc.storage_path))
+                first_vision_task = convert_to_pdf_task.s(str(doc_id))
+            else:
+                first_vision_task = convert_to_pdf_task.s({"status": "clean", "s3_key": db_doc.storage_path}, str(doc_id))
+
+            if decision.run_vision and settings.ENABLE_VISION:
+                pipeline_tasks.append(first_vision_task)
+                pipeline_tasks.append(render_pages_task.s(str(doc_id)))
+                pipeline_tasks.append(embed_and_index_task.s(str(doc_id)))
+
+            if decision.run_docling and settings.DOCLING_ENABLED:
+                pipeline_tasks.append(docling_parse_task.si(str(doc_id)))
+                
+            if decision.run_ocr and settings.ENABLE_OCR:
+                pipeline_tasks.append(ocr_task.si(str(doc_id)))
+                
+            pipeline_tasks.append(metadata_enrichment_task.si(str(doc_id)))
+            pipeline_tasks.append(bge_embed_task.si(str(doc_id)))
+
+            if pipeline_tasks:
+                chain(*pipeline_tasks).apply_async()
+        except Exception as exc:
+            logger.error(f"Failed to manually reprocess ingestion pipeline: {exc}")
 
     return {"status": "reprocessing_started", "pipeline": pipeline}
+
+# ---------------------------------------------------------------------------
+# Sprint 5: Discovery Endpoints (Recent, Frequent, Related)
+# ---------------------------------------------------------------------------
+
+@router.get("/recent", response_model=List[DocumentResponse])
+def get_recent_documents(
+    limit: int = 10,
+    current_context: CurrentUserContext = Depends(PermissionChecker("documents:read")),
+    db: Session = Depends(get_db)
+):
+    """
+    GET /api/v1/documents/recent
+    Retrieves the most recently viewed documents for the current user.
+    """
+    interactions = db.query(UserDocumentInteraction).filter(
+        UserDocumentInteraction.user_id == current_context.user.id,
+        UserDocumentInteraction.org_id == uuid.UUID(current_context.org_id)
+    ).order_by(UserDocumentInteraction.last_interaction_at.desc()).limit(limit).all()
+    
+    doc_ids = [i.document_id for i in interactions]
+    if not doc_ids:
+        return []
+        
+    # Fetch documents and maintain order
+    docs = db.query(document_repo.model).filter(document_repo.model.id.in_(doc_ids)).all()
+    doc_map = {d.id: d for d in docs}
+    return [doc_map[did] for did in doc_ids if did in doc_map]
+
+@router.get("/frequent", response_model=List[DocumentResponse])
+def get_frequent_documents(
+    limit: int = 10,
+    current_context: CurrentUserContext = Depends(PermissionChecker("documents:read")),
+    db: Session = Depends(get_db)
+):
+    """
+    GET /api/v1/documents/frequent
+    Retrieves the most frequently viewed documents for the current user.
+    """
+    interactions = db.query(UserDocumentInteraction).filter(
+        UserDocumentInteraction.user_id == current_context.user.id,
+        UserDocumentInteraction.org_id == uuid.UUID(current_context.org_id)
+    ).order_by(UserDocumentInteraction.count.desc()).limit(limit).all()
+    
+    doc_ids = [i.document_id for i in interactions]
+    if not doc_ids:
+        return []
+        
+    docs = db.query(document_repo.model).filter(document_repo.model.id.in_(doc_ids)).all()
+    doc_map = {d.id: d for d in docs}
+    return [doc_map[did] for did in doc_ids if did in doc_map]
+
+class RelatedDocumentResponse(BaseModel):
+    document: DocumentResponse
+    relationship_type: str
+    weight: float
+    
+    class Config:
+        from_attributes = True
+
+@router.get("/{doc_id}/related", response_model=List[RelatedDocumentResponse])
+def get_related_documents(
+    doc_id: uuid.UUID,
+    limit: int = 5,
+    current_context: CurrentUserContext = Depends(PermissionChecker("documents:read")),
+    db: Session = Depends(get_db)
+):
+    """
+    GET /api/v1/documents/{doc_id}/related
+    Retrieves documents related to this one via the Knowledge Graph.
+    """
+    # Verify access to source document
+    db_doc = document_repo.get(db, id=doc_id)
+    if not db_doc or str(db_doc.org_id) != current_context.org_id:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    edges = db.query(KnowledgeGraphEdge).filter(
+        KnowledgeGraphEdge.source_document_id == doc_id
+    ).order_by(KnowledgeGraphEdge.weight.desc()).limit(limit).all()
+    
+    response = []
+    for edge in edges:
+        target_doc = document_repo.get(db, id=edge.target_document_id)
+        if target_doc:
+            response.append({
+                "document": target_doc,
+                "relationship_type": edge.relationship_type,
+                "weight": edge.weight
+            })
+            
+    return response

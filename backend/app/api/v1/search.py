@@ -23,6 +23,7 @@ from backend.app.models.models import TeamMembership
 from backend.app.repositories.base_repo import search_log_repo
 from backend.app.schemas.schemas import SearchRequest, SearchResponse, SearchResult as SearchResultSchema
 from backend.app.services.search_service import hybrid_search, SearchResult as SvcSearchResult
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,8 @@ def search_documents(
         team_ids=team_ids,
         folder_id=str(request.folder_id) if request.folder_id else None,
         document_id=str(request.document_id) if request.document_id else None,
+        metadata_filters=request.metadata_filters,
+        search_mode=request.search_mode,
         top_k=request.top_k,
     )
 
@@ -142,3 +145,33 @@ def search_documents(
         total=len(schema_results),
         query_time_ms=latency_ms,
     )
+
+class SearchSuggestionsResponse(BaseModel):
+    suggestions: List[str]
+
+@router.get(
+    "/suggestions",
+    response_model=SearchSuggestionsResponse,
+    summary="Get search suggestions for a query"
+)
+def get_search_suggestions(
+    query: str,
+    current_context: CurrentUserContext = Depends(PermissionChecker("search:documents")),
+):
+    """
+    GET /api/v1/search/suggestions
+    Uses the LLM query expansion to return search suggestions based on the user's input.
+    """
+    from backend.app.services.llm_client import get_llm_client
+    
+    if not query or len(query) < 3:
+        return SearchSuggestionsResponse(suggestions=[])
+        
+    try:
+        llm = get_llm_client()
+        expansion = llm.expand_query_sync(query)
+        suggestions = expansion.get("suggestions", [])
+        return SearchSuggestionsResponse(suggestions=suggestions)
+    except Exception as exc:
+        logger.warning("Failed to generate search suggestions: %s", exc)
+        return SearchSuggestionsResponse(suggestions=[])

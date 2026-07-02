@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 class Citation:
     doc_name: str
     page_number: int
+    paragraph: str = ""
+    confidence: float = 1.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -34,20 +36,32 @@ def build_system_prompt(page_metadata: List[Dict[str, Any]]) -> str:
       3. Never hallucinate information not present in the pages
     """
     pages_description = "\n".join(
-        f"  • [{m.get('doc_name', 'Document')}, Page {m.get('page_number', 1)}]"
-        f" — snippet: \"{m.get('text_snippet', '')[:100]}\""
+        f"  • Document: '{m.get('doc_name', 'Document')}', Page: {m.get('page_number', 1)}"
+        f" — Paragraph/Section: '{m.get('hierarchy', 'General')}'"
+        f" — Text: \"{m.get('text_snippet', '')[:200]}\""
         for m in page_metadata
     )
 
     return (
         "You are DOCSCOPE AI, an enterprise document intelligence assistant.\n\n"
         "## Rules you MUST follow:\n"
-        "1. Answer ONLY using information visible in the provided page images and text snippets below.\n"
-        "2. Every claim you make must include an inline citation in this EXACT format: [DocName, Page N]\n"
-        "   Example: 'The revenue for Q3 was $4.2M [Quarterly_Report.pdf, Page 5].'\n"
-        "3. Do NOT invent information. If the answer is not in the provided pages, say:\n"
+        "1. Answer ONLY using information visible in the provided context pages.\n"
+        "2. Do NOT invent information. If the answer is not in the provided pages, say:\n"
         "   'I could not find relevant information in the provided documents.'\n"
-        "4. Be concise, professional, and structured (use bullet points when listing multiple facts).\n\n"
+        "3. You must provide a clear, markdown-formatted response.\n"
+        "4. AT THE VERY END of your response, you MUST append a line exactly reading '---CITATIONS---' followed by a raw JSON array of citations for the facts you used.\n"
+        "   Example format:\n"
+        "   Your answer goes here in markdown.\n"
+        "   ---CITATIONS---\n"
+        "   [\n"
+        "     {\n"
+        '       "document_name": "Invoice.pdf",\n'
+        '       "page": 2,\n'
+        '       "paragraph": "Payment Terms",\n'
+        '       "confidence": 0.95\n'
+        "     }\n"
+        "   ]\n"
+        "5. Include a confidence score (0.0 to 1.0) for each citation based on how well it answers the query.\n\n"
         "## Available Context Pages:\n"
         f"{pages_description}\n\n"
         "Now answer the user's question based strictly on the above pages."
@@ -93,16 +107,34 @@ def validate_citations(answer: str, page_metadata: List[Dict[str, Any]]) -> List
 
 def parse_citations(answer: str) -> List[Citation]:
     """
-    Extract all [DocName, Page N] citation tags from an answer string.
-    Returns a deduplicated list of Citation objects preserving order.
+    Extract citations from the JSON array at the end of the answer.
     """
-    seen: set = set()
+    import json
     citations: List[Citation] = []
-    for match in _CITATION_RE.finditer(answer):
-        doc_name = match.group(1).strip()
-        page_num = int(match.group(2))
-        key = (doc_name.lower(), page_num)
-        if key not in seen:
-            seen.add(key)
-            citations.append(Citation(doc_name=doc_name, page_number=page_num))
+    
+    parts = answer.split("---CITATIONS---")
+    if len(parts) > 1:
+        json_str = parts[-1].strip()
+        # Clean up markdown code blocks if the model wrapped it
+        if json_str.startswith("```json"):
+            json_str = json_str.replace("```json", "", 1)
+        if json_str.startswith("```"):
+            json_str = json_str.replace("```", "", 1)
+        if json_str.endswith("```"):
+            json_str = json_str[:-3]
+        json_str = json_str.strip()
+            
+        try:
+            raw_citations = json.loads(json_str)
+            if isinstance(raw_citations, list):
+                for c in raw_citations:
+                    citations.append(Citation(
+                        doc_name=c.get("document_name", "Unknown"),
+                        page_number=c.get("page", 1),
+                        paragraph=c.get("paragraph", ""),
+                        confidence=float(c.get("confidence", 1.0))
+                    ))
+        except Exception as exc:
+            logger.warning("Failed to parse JSON citations: %s\nString was: %s", exc, json_str)
+            
     return citations

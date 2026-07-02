@@ -46,6 +46,8 @@ services:
     image: clamav/clamav:latest
     container_name: docscope-clamav
     restart: always
+    profiles:
+      - security
     ports:
       - "3310:3310"
 
@@ -62,13 +64,15 @@ services:
       - "9001:9001"
     volumes:
       - minio_data:/data
-  ocr-worker:
+  worker-ocr:
     build:
       context: ../backend
       dockerfile: Dockerfile
-    container_name: docscope-ocr-worker
+    container_name: docscope-worker-ocr
     command: celery -A backend.app.tasks.celery_app worker -l info -Q ocr-pipeline --concurrency=1
     restart: unless-stopped
+    profiles:
+      - ai
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
@@ -78,11 +82,7 @@ services:
       - S3_ACCESS_KEY=minioadmin
       - S3_SECRET_KEY=minioadmin
       - S3_BUCKET_NAME=docscope-documents
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
       - OCR_PROVIDER=PaddleOCR
-      - TEXT_EMBEDDING_MODEL=BAAI/bge-m3
-      - VISION_MODEL=ColQwen2
-      - RERANK_MODEL=BAAI/bge-reranker-v2-m3
       - GPU_ENABLED=true
       - HF_HOME=/models
     volumes:
@@ -92,8 +92,49 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "8"
-          memory: 8g
+          cpus: "4"
+          memory: 4g
+    healthcheck:
+      test: ["CMD", "python", "-c", "print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker-embed:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: docscope-worker-embed
+    command: celery -A backend.app.tasks.celery_app worker -l info -Q embed-pipeline --concurrency=1
+    restart: unless-stopped
+    profiles:
+      - ai
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/docscope
+      - QDRANT_URL=http://qdrant:6333
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY=minioadmin
+      - S3_SECRET_KEY=minioadmin
+      - S3_BUCKET_NAME=docscope-documents
+      - TEXT_EMBEDDING_MODEL=BAAI/bge-m3
+      - GPU_ENABLED=true
+      - HF_HOME=/models
+      - BGE_WORKER_MODE=1
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+      - ai_models:/models
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 4g
         reservations:
           devices:
             - driver: nvidia
@@ -110,6 +151,71 @@ services:
       redis:
         condition: service_healthy
 
+  worker-metadata:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: docscope-worker-metadata
+    command: celery -A backend.app.tasks.celery_app worker -l info -Q metadata-pipeline --concurrency=2
+    restart: unless-stopped
+    profiles:
+      - ai
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/docscope
+      - QDRANT_URL=http://qdrant:6333
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY=minioadmin
+      - S3_SECRET_KEY=minioadmin
+      - S3_BUCKET_NAME=docscope-documents
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2g
+    healthcheck:
+      test: ["CMD", "python", "-c", "print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: docscope-prometheus
+    restart: always
+    profiles:
+      - monitoring
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: docscope-grafana
+    restart: always
+    profiles:
+      - monitoring
+    ports:
+      - "3005:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
 volumes:
   postgres_data:
   qdrant_data:
@@ -117,3 +223,5 @@ volumes:
   huggingface_cache:
   paddle_cache:
   ai_models:
+  prometheus_data:
+  grafana_data:

@@ -5,6 +5,36 @@ from backend.app.api.v1 import auth
 from backend.app.api.v1 import search as search_router_module
 from backend.app.api.v1 import chat as chat_router_module
 
+import logging
+import json
+from datetime import datetime
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        log_record = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "level": record.levelname,
+            "name": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            log_record["exc_info"] = self.formatException(record.exc_info)
+        return json.dumps(log_record)
+
+def setup_logging():
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # Remove all default handlers
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+        
+    handler = logging.StreamHandler()
+    handler.setFormatter(JSONFormatter())
+    logger.addHandler(handler)
+
+setup_logging()
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
@@ -63,3 +93,11 @@ def test_tenant_isolation(org_id: str, current_context: CurrentUserContext = Dep
 @app.get("/")
 def read_root():
     return {"message": "Welcome to DOCSCOPE AI - Enterprise Multimodal Document Intelligence API"}
+
+@app.get("/health", tags=["system"])
+def health_check():
+    """
+    GET /health
+    Basic health check endpoint for load balancers and orchestrators.
+    """
+    return {"status": "ok", "service": "docscope-api"}

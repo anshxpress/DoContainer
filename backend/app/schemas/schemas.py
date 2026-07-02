@@ -53,12 +53,20 @@ class SearchMode(str, Enum):
     TEXT = "text"
     KEYWORD = "keyword"
 
+class MetadataFilters(BaseModel):
+    title: Optional[str] = Field(None, description="Filter by document title")
+    department: Optional[str] = Field(None, description="Filter by department")
+    tags: Optional[List[str]] = Field(None, description="Filter by tags")
+    author: Optional[str] = Field(None, description="Filter by author")
+    document_type: Optional[str] = Field(None, description="Filter by document type")
+
 class SearchRequest(BaseModel):
     """Input payload for POST /api/v1/search."""
     query: str = Field(..., min_length=1, max_length=1000, description="Natural-language search query")
     search_mode: SearchMode = Field(default=SearchMode.HYBRID, description="Search mode to use")
     folder_id: Optional[uuid.UUID] = Field(None, description="Optional folder UUID to narrow search scope")
     document_id: Optional[uuid.UUID] = Field(None, description="Optional document UUID to narrow search scope")
+    metadata_filters: Optional[MetadataFilters] = Field(None, description="Optional metadata filters to pre-filter documents")
     top_k: int = Field(default=10, ge=1, le=100, description="Maximum number of results to return")
 
 

@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import os
+import concurrent.futures
 import tempfile
 import uuid
 import time
@@ -27,6 +28,8 @@ from backend.app.core.config import settings
 from backend.app.core.db import SessionLocal
 from backend.app.core.s3 import s3_storage
 from backend.app.core.qdrant import qdrant_client
+from backend.app.core.profiler import StageProfiler
+import concurrent.futures
 from backend.app.models.models import (
     DocumentParseElement,
     OcrChunk,
@@ -249,64 +252,53 @@ def ocr_task(self, document_id: str) -> Dict[str, Any]:
         ).delete(synchronize_session=False)
         db.flush()
 
-        batch_size = 4
-        all_new_chunks = []
-        
-        for i in range(0, len(pages), batch_size):
-            batch_pages = pages[i:i+batch_size]
-            scanned_pages = [p for p in batch_pages if not ocr_svc.is_scanned_page(p.text_content)]
-            if not scanned_pages:
-                continue
-
-            # Batch Download
-            t0_dl = time.time()
-            batch_png_paths = []
-            for page in scanned_pages:
-                png_local = os.path.join(temp_dir, f"page_{page.page_number}.png")
-                try:
-                    s3_storage.client.download_file(
-                        s3_storage.bucket_name, page.png_storage_path, png_local
-                    )
-                    batch_png_paths.append((page.page_number, png_local))
-                except Exception as dl_err:
-                    logger.warning(
-                        f"[ocr_task] Failed to download page {page.page_number} PNG: {dl_err}. Skipping."
-                    )
-            t_dl = time.time() - t0_dl
-            
-            if not batch_png_paths:
-                continue
-            
-            # Batch OCR
-            t0_ocr = time.time()
-            # We map page_paths to their real page numbers for DB tracking
-            for page_num, png_local in batch_png_paths:
-                results = ocr_svc.run_page_ocr(png_local)
-                for chunk in results:
-                    all_new_chunks.append(OcrChunk(
-                        document_id=doc_uuid,
-                        org_id=doc.org_id,
-                        page_number=page_num,
-                        text=chunk.text,
-                        confidence=chunk.confidence,
-                        language=chunk.language,
-                        bbox_x0=chunk.bbox_x0,
-                        bbox_y0=chunk.bbox_y0,
-                        bbox_x1=chunk.bbox_x1,
-                        bbox_y1=chunk.bbox_y1,
-                        reading_order=chunk.reading_order,
-                    ))
-                pages_processed += 1
-            t_ocr = time.time() - t0_ocr
-            logger.info(f"[ocr_task] Batch times for {len(batch_png_paths)} pages: Download {t_dl:.2f}s, OCR {t_ocr:.2f}s")
-
-        t0_db = time.time()
-        if all_new_chunks:
-            db.add_all(all_new_chunks)
-            db.flush()
-            total_chunks = len(all_new_chunks)
-        t_db = time.time() - t0_db
-        logger.info(f"[ocr_task] DB Bulk Insert time for {total_chunks} chunks: {t_db:.2f}s")
+        with StageProfiler(db, doc_uuid, doc.org_id, "ocr"):
+            scanned_pages = [p for p in pages if ocr_svc.is_scanned_page(p.text_content)]
+            if scanned_pages:
+                def download_png(page):
+                    png_local = os.path.join(temp_dir, f"page_{page.page_number}.png")
+                    try:
+                        s3_storage.client.download_file(
+                            s3_storage.bucket_name, page.png_storage_path, png_local
+                        )
+                        return (page.page_number, png_local)
+                    except Exception as err:
+                        logger.warning(f"[ocr_task] Download failed: {err}")
+                        return None
+                
+                # Parallel S3 Downloads
+                batch_png_paths = []
+                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                    results = executor.map(download_png, scanned_pages)
+                    for res in results:
+                        if res:
+                            batch_png_paths.append(res)
+                
+                # Sequential OCR
+                all_new_chunks = []
+                for page_num, png_local in batch_png_paths:
+                    results = ocr_svc.run_page_ocr(png_local)
+                    for chunk in results:
+                        all_new_chunks.append(OcrChunk(
+                            document_id=doc_uuid,
+                            org_id=doc.org_id,
+                            page_number=page_num,
+                            text=chunk.text,
+                            confidence=chunk.confidence,
+                            language=chunk.language,
+                            bbox_x0=chunk.bbox_x0,
+                            bbox_y0=chunk.bbox_y0,
+                            bbox_x1=chunk.bbox_x1,
+                            bbox_y1=chunk.bbox_y1,
+                            reading_order=chunk.reading_order,
+                        ))
+                    pages_processed += 1
+                
+                if all_new_chunks:
+                    db.bulk_save_objects(all_new_chunks)
+                    db.flush()
+                    total_chunks = len(all_new_chunks)
+        logger.info(f"[ocr_task] OCR chunks generated: {total_chunks}")
 
         metrics = {
             "pages_processed": pages_processed,
@@ -375,131 +367,183 @@ def bge_embed_task(self, document_id: str) -> Dict[str, Any]:
 
         from backend.app.services.bge_service import get_bge_service
         bge = get_bge_service()
+        from backend.app.core.qdrant import qdrant_client
+        from qdrant_client.models import PointStruct
+
+        # 1. Deduplication Check
+        if doc.file_hash:
+            duplicate_doc = db.query(document_repo.model).filter(
+                document_repo.model.file_hash == doc.file_hash,
+                document_repo.model.status == "completed",
+                document_repo.model.id != doc.id
+            ).first()
+            
+            if duplicate_doc:
+                logger.info(f"[bge_embed_task] Found duplicate {duplicate_doc.id} for {document_id}. Reusing embeddings.")
+                dup_chunks = db.query(TextEmbeddingChunk).filter(
+                    TextEmbeddingChunk.document_id == duplicate_doc.id
+                ).all()
+                
+                if dup_chunks:
+                    dup_point_ids = [str(c.qdrant_point_id) for c in dup_chunks if c.qdrant_point_id]
+                    if dup_point_ids:
+                        points = qdrant_client.retrieve(
+                            collection_name=settings.QDRANT_TEXT_COLLECTION_NAME,
+                            ids=dup_point_ids,
+                            with_payload=True,
+                            with_vectors=True
+                        )
+                        
+                        new_qdrant_points = []
+                        new_db_chunks = []
+                        for point in points:
+                            new_point_id = str(uuid.uuid4())
+                            new_payload = dict(point.payload or {})
+                            new_payload.update({
+                                "document_id": str(document_id),
+                                "org_id": str(org_id),
+                                "folder_id": folder_id
+                            })
+                            new_qdrant_points.append(PointStruct(
+                                id=new_point_id, vector=point.vector, payload=new_payload
+                            ))
+                            
+                            orig_chunk = next((c for c in dup_chunks if str(c.qdrant_point_id) == str(point.id)), None)
+                            if orig_chunk:
+                                new_db_chunks.append(TextEmbeddingChunk(
+                                    document_id=doc_uuid, org_id=doc.org_id, folder_id=doc.folder_id,
+                                    page_number=orig_chunk.page_number, chunk_index=orig_chunk.chunk_index,
+                                    chunk_type=orig_chunk.chunk_type, content=orig_chunk.content,
+                                    section=orig_chunk.section, heading=orig_chunk.heading,
+                                    hierarchy=orig_chunk.hierarchy, parent_section=orig_chunk.parent_section,
+                                    qdrant_point_id=uuid.UUID(new_point_id), language=orig_chunk.language, version=orig_chunk.version
+                                ))
+                        
+                        if new_qdrant_points:
+                            batch_size = 100
+                            for i in range(0, len(new_qdrant_points), batch_size):
+                                qdrant_client.upsert(
+                                    collection_name=settings.QDRANT_TEXT_COLLECTION_NAME,
+                                    points=new_qdrant_points[i: i + batch_size]
+                                )
+                            db.bulk_save_objects(new_db_chunks)
+                            db.commit()
+                            _complete_job(db, job, {"chunks_created": len(new_db_chunks), "deduplicated": True})
+                            return {"status": "completed", "chunks_created": len(new_db_chunks), "deduplicated": True}
+
+        # 2. Extract DocumentType for semantic chunker
+        from backend.app.models.models import DocumentSummary
+        doc_summary = db.query(DocumentSummary).filter(DocumentSummary.document_id == doc_uuid).first()
+        doc_type = doc_summary.document_type if doc_summary else None
 
         # Gather all text units to embed
-        # Source 1: Docling parse elements (paragraphs, headings, tables)
-        parse_elements = (
-            db.query(DocumentParseElement)
-            .filter(
+        with StageProfiler(db, doc_uuid, doc.org_id, "embedding"):
+            parse_elements = db.query(DocumentParseElement).filter(
                 DocumentParseElement.document_id == doc_uuid,
-                DocumentParseElement.element_type.in_(
-                    ["paragraph", "heading", "table", "list", "caption"]
-                ),
-            )
-            .order_by(DocumentParseElement.page_number, DocumentParseElement.reading_order)
-            .all()
-        )
+                DocumentParseElement.element_type.in_(["paragraph", "heading", "table", "list", "caption"])
+            ).order_by(DocumentParseElement.page_number, DocumentParseElement.reading_order).all()
 
-        # Source 2: OCR chunks
-        ocr_chunks = (
-            db.query(OcrChunk)
-            .filter(OcrChunk.document_id == doc_uuid)
-            .order_by(OcrChunk.page_number, OcrChunk.reading_order)
-            .all()
-        )
+            ocr_chunks = db.query(OcrChunk).filter(OcrChunk.document_id == doc_uuid).order_by(OcrChunk.page_number, OcrChunk.reading_order).all()
 
-        # Build a flat list of (raw_text, page_number, chunk_type, language) tuples
-        text_units: List[tuple] = []
-        for elem in parse_elements:
-            if elem.content and elem.content.strip():
-                sub_chunks = _simple_chunk_text(elem.content, settings.BGE_M3_MAX_TOKENS)
-                for sc in sub_chunks:
-                    text_units.append((sc, elem.page_number, elem.element_type, None))
+            all_elements = list(parse_elements) + list(ocr_chunks)
 
-        for oc in ocr_chunks:
-            if oc.text and oc.text.strip():
-                sub_chunks = _simple_chunk_text(oc.text, settings.BGE_M3_MAX_TOKENS)
-                for sc in sub_chunks:
-                    text_units.append((sc, oc.page_number, "ocr", oc.language))
+            from backend.app.services.semantic_chunker import SemanticChunkEngine
+            chunk_engine = SemanticChunkEngine(document_type=doc_type)
+            semantic_chunks = chunk_engine.process_elements(all_elements)
 
-        if not text_units:
-            logger.info(f"[bge_embed_task] No text to embed for document {document_id}. Skipping.")
-            _complete_job(db, job, {"chunks_created": 0})
-            db.commit()
-            return {"status": "completed", "chunks_created": 0}
+            if not semantic_chunks:
+                logger.info(f"[bge_embed_task] No text to embed for document {document_id}. Skipping.")
+                _complete_job(db, job, {"chunks_created": 0})
+                db.commit()
+                return {"status": "completed", "chunks_created": 0}
 
-        # Delete existing text embedding chunks (idempotent)
-        # Also delete from Qdrant
-        try:
-            from qdrant_client.models import Filter, FieldCondition, MatchValue
-            qdrant_client.delete(
-                collection_name=settings.QDRANT_TEXT_COLLECTION_NAME,
-                points_selector=Filter(
-                    must=[FieldCondition(key="document_id", match=MatchValue(value=document_id))]
-                ),
-            )
-        except Exception as qd_err:
-            logger.warning(f"[bge_embed_task] Qdrant delete failed (non-fatal): {qd_err}")
-
-        db.query(TextEmbeddingChunk).filter(
-            TextEmbeddingChunk.document_id == doc_uuid
-        ).delete(synchronize_session=False)
-        db.flush()
-
-        # Batch-encode all text units
-        texts_only = [t[0] for t in text_units]
-        vectors = bge.encode_texts(texts_only, batch_size=settings.BGE_M3_BATCH_SIZE)
-
-        qdrant_points: List[PointStruct] = []
-        chunks_created = 0
-        for chunk_index, ((text, page_number, chunk_type, language), vector) in enumerate(
-            zip(text_units, vectors)
-        ):
-            qdrant_point_id = str(uuid.uuid4())
-            qdrant_points.append(
-                PointStruct(
-                    id=qdrant_point_id,
-                    vector=vector,
-                    payload={
-                        "org_id": org_id,
-                        "folder_id": folder_id,
-                        "document_id": document_id,
-                        "page_number": page_number,
-                        "chunk_type": chunk_type,
-                        "language": language or "en",
-                        "content": text[:1000],  # payload snippet for display
-                        "version": 1,
-                    },
-                )
-            )
-            db.add(TextEmbeddingChunk(
-                document_id=doc_uuid,
-                org_id=doc.org_id,
-                folder_id=doc.folder_id,
-                page_number=page_number,
-                chunk_index=chunk_index,
-                chunk_type=chunk_type,
-                content=text,
-                qdrant_point_id=uuid.UUID(qdrant_point_id),
-                language=language,
-                version=1,
-            ))
-            chunks_created += 1
-
-        # Upsert to Qdrant in batches of 100
-        batch_size = 100
-        for i in range(0, len(qdrant_points), batch_size):
-            batch = qdrant_points[i: i + batch_size]
+            # Delete existing text embedding chunks (idempotent)
             try:
-                qdrant_client.upsert(
+                from qdrant_client.models import Filter, FieldCondition, MatchValue
+                qdrant_client.delete(
                     collection_name=settings.QDRANT_TEXT_COLLECTION_NAME,
-                    points=batch,
+                    points_selector=Filter(must=[FieldCondition(key="document_id", match=MatchValue(value=document_id))]),
                 )
             except Exception as qd_err:
-                logger.warning(
-                    f"[bge_embed_task] Qdrant upsert batch {i}-{i+batch_size} failed: {qd_err}. "
-                    "Continuing (dev fallback)."
+                logger.warning(f"[bge_embed_task] Qdrant delete failed (non-fatal): {qd_err}")
+
+            db.query(TextEmbeddingChunk).filter(
+                TextEmbeddingChunk.document_id == doc_uuid
+            ).delete(synchronize_session=False)
+            db.flush()
+
+            # Batch-encode all text units
+            texts_only = [c.content for c in semantic_chunks]
+            vectors = bge.encode_texts(texts_only, batch_size=settings.BGE_M3_BATCH_SIZE)
+
+            qdrant_points: List[PointStruct] = []
+            chunks_created = 0
+            for chunk_index, (chunk, vector) in enumerate(zip(semantic_chunks, vectors)):
+                qdrant_point_id = str(uuid.uuid4())
+                payload = {
+                    "org_id": org_id,
+                    "folder_id": folder_id,
+                    "document_id": document_id,
+                    "page_number": chunk.page_number,
+                    "chunk_type": chunk.chunk_type,
+                    "language": "en",
+                    "content": chunk.content[:1000],  # payload snippet
+                    "section": chunk.section,
+                    "heading": chunk.heading,
+                    "hierarchy": chunk.hierarchy,
+                    "parent_section": chunk.parent_section,
+                    "version": 1,
+                }
+            
+                qdrant_points.append(
+                    PointStruct(
+                        id=qdrant_point_id,
+                        vector=vector,
+                        payload=payload,
+                    )
                 )
+                db.add(TextEmbeddingChunk(
+                    document_id=doc_uuid,
+                    org_id=doc.org_id,
+                    folder_id=doc.folder_id,
+                    page_number=chunk.page_number,
+                    chunk_index=chunk_index,
+                    chunk_type=chunk.chunk_type,
+                    content=chunk.content,
+                    section=chunk.section,
+                    heading=chunk.heading,
+                    hierarchy=chunk.hierarchy,
+                    parent_section=chunk.parent_section,
+                    qdrant_point_id=uuid.UUID(qdrant_point_id),
+                    language="en",
+                    version=1,
+                ))
+                chunks_created += 1
 
-        metrics = {"chunks_created": chunks_created, "qdrant_points": len(qdrant_points)}
-        _complete_job(db, job, metrics)
-        db.commit()
+            # Upsert to Qdrant in batches of 100
+            batch_size = 100
+            for i in range(0, len(qdrant_points), batch_size):
+                batch = qdrant_points[i: i + batch_size]
+                try:
+                    qdrant_client.upsert(
+                        collection_name=settings.QDRANT_TEXT_COLLECTION_NAME,
+                        points=batch,
+                    )
+                except Exception as qd_err:
+                    logger.warning(
+                        f"[bge_embed_task] Qdrant upsert batch {i}-{i+batch_size} failed: {qd_err}. "
+                        "Continuing (dev fallback)."
+                    )
 
-        logger.info(
-            f"[bge_embed_task] Completed for {document_id}: "
-            f"{chunks_created} chunks embedded."
-        )
-        return {"status": "completed", "chunks_created": chunks_created}
+            metrics = {"chunks_created": chunks_created, "qdrant_points": len(qdrant_points)}
+            _complete_job(db, job, metrics)
+            db.commit()
+
+            logger.info(
+                f"[bge_embed_task] Completed for {document_id}: "
+                f"{chunks_created} chunks embedded."
+            )
+            return {"status": "completed", "chunks_created": chunks_created}
 
     except Exception as exc:
         if job:
@@ -514,9 +558,9 @@ def bge_embed_task(self, document_id: str) -> Dict[str, Any]:
         db.close()
 
 
-# ---------------------------------------------------------------------------
-# Task 4: metadata_enrichment_task
-# ---------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------
+    # Task 4: metadata_enrichment_task
+    # ---------------------------------------------------------------------------
 
 @celery_app.task(
     name="backend.app.tasks.ocr_tasks.metadata_enrichment_task",
@@ -587,8 +631,17 @@ def metadata_enrichment_task(self, document_id: str) -> Dict[str, Any]:
         metrics = {"success": success, "text_length": len(full_text)}
         _complete_job(db, job, metrics)
         db.commit()
-
+        
         logger.info(f"[metadata_enrichment_task] Completed for {document_id}: success={success}")
+        
+        # Trigger Sprint 5 Knowledge Graph build
+        if success:
+            try:
+                from backend.app.tasks.knowledge_graph_tasks import build_knowledge_graph_task
+                build_knowledge_graph_task.delay(document_id)
+            except Exception as e:
+                logger.error(f"Failed to trigger knowledge graph task: {e}")
+                
         return {"status": "completed", "success": success}
 
     except Exception as exc:
@@ -598,7 +651,6 @@ def metadata_enrichment_task(self, document_id: str) -> Dict[str, Any]:
                 db.commit()
             except Exception:
                 pass
-        db.close()
         raise
     finally:
         db.close()

@@ -170,6 +170,7 @@ class Document(Base):
     status: Mapped[str] = mapped_column(String(50), default="queued") # queued, processing, completed, failed
     file_type: Mapped[str] = mapped_column(String(50), nullable=False)
     file_size: Mapped[int] = mapped_column(nullable=False)
+    file_hash: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Hybrid Pipeline: metadata enrichment fields
     category: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -189,6 +190,7 @@ class Document(Base):
     keywords: Mapped[List["DocumentKeyword"]] = relationship(back_populates="document", cascade="all, delete-orphan")
     entities: Mapped[List["DocumentEntity"]] = relationship(back_populates="document", cascade="all, delete-orphan")
     processing_jobs: Mapped[List["ProcessingJob"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+    processing_metrics: Mapped[List["ProcessingMetrics"]] = relationship(back_populates="document", cascade="all, delete-orphan")
 
 
 
@@ -405,6 +407,12 @@ class TextEmbeddingChunk(Base):
     chunk_index: Mapped[int] = mapped_column(nullable=False, default=0)  # within-page ordering
     chunk_type: Mapped[str] = mapped_column(String(50), nullable=False)  # paragraph/heading/table/ocr/section
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # Metadata for semantic chunking
+    section: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    heading: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    hierarchy: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    parent_section: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    
     qdrant_point_id: Mapped[Optional[uuid.UUID]] = mapped_column(nullable=True)
     language: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     version: Mapped[int] = mapped_column(nullable=False, default=1)
@@ -514,3 +522,87 @@ class ProcessingJob(Base):
 
     # Relationships
     document: Mapped["Document"] = relationship(back_populates="processing_jobs")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sprint 4 — Processing Profiling Metrics
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ProcessingMetrics(Base):
+    """
+    Tracks detailed performance metrics for each stage of document ingestion.
+    Metrics include CPU usage, GPU memory, and duration for Upload, OCR,
+    Embedding, Metadata, Vision, and Database operations.
+    """
+    __tablename__ = "processing_metrics"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    stage: Mapped[str] = mapped_column(String(100), nullable=False)  # upload/ocr/embedding/metadata/vision/database/qdrant
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[Optional[int]] = mapped_column(nullable=True)
+    cpu_percent: Mapped[Optional[float]] = mapped_column(nullable=True)
+    gpu_memory_mb: Mapped[Optional[float]] = mapped_column(nullable=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="in_progress")  # in_progress/completed/failed
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    document: Mapped["Document"] = relationship(back_populates="processing_metrics")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sprint 5 — Knowledge Graph & Discovery
+# ─────────────────────────────────────────────────────────────────────────────
+
+class KnowledgeGraphEdge(Base):
+    """
+    Connects documents automatically based on vector similarity, shared entities, or explicit references.
+    """
+    __tablename__ = "knowledge_graph_edges"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    org_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    source_document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    relationship_type: Mapped[str] = mapped_column(String(100), nullable=False) # e.g., 'similarity', 'reference', 'shared_entity'
+    weight: Mapped[float] = mapped_column(nullable=False, default=1.0) # Confidence or similarity score
+    metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # E.g., shared entity names
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    
+    source_document: Mapped["Document"] = relationship(foreign_keys=[source_document_id])
+    target_document: Mapped["Document"] = relationship(foreign_keys=[target_document_id])
+
+from sqlalchemy.dialects.postgresql import JSONB
+
+class FailedJob(Base):
+    __tablename__ = "failed_jobs"
+    
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    task_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    task_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    args: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    kwargs: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str] = mapped_column(Text, nullable=False)
+    stack_trace: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(50), default="failed", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class UserDocumentInteraction(Base):
+    """
+    Tracks user interaction with documents to fuel 'Recently Viewed' and 'Frequently Used' features.
+    """
+    __tablename__ = "user_document_interactions"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    interaction_type: Mapped[str] = mapped_column(String(50), nullable=False) # 'viewed', 'searched', 'cited'
+    count: Mapped[int] = mapped_column(nullable=False, default=1)
+    last_interaction_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    user: Mapped["User"] = relationship()
+    document: Mapped["Document"] = relationship()
+
+
