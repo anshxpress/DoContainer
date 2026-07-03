@@ -104,7 +104,11 @@ return a single JSON object with EXACTLY these fields (no extra fields):
   "document_type": "<contract|report|research|invoice|letter|policy|manual|other>",
   "category": "<HR|Finance|Legal|Engineering|Marketing|Operations|Other>",
   "department": "<optional department name or empty string>",
-  "complexity_score": <float 0.0 (simple) to 1.0 (highly technical)>
+  "complexity_score": <float 0.0 (simple) to 1.0 (highly technical)>,
+  "importance_score": <float 1.0 (low) to 10.0 (high) based on business impact>,
+  "risk_score": <float 0.0 (safe) to 10.0 (high risk) based on PII, confidentiality, liability>,
+  "risk_issues": ["<explanation of risk 1>", "<explanation of risk 2>"], // empty if safe
+  "executive_summary": "<A concise, bulleted summary for executives>"
 }
 
 Return valid JSON only. No markdown, no commentary.
@@ -162,6 +166,10 @@ async def enrich_document_metadata(
             "category": "Other",
             "department": "",
             "complexity_score": 0.5,
+            "importance_score": 5.0,
+            "risk_score": 0.0,
+            "risk_issues": [],
+            "executive_summary": full_text[:200]
         }
 
     summary_text = parsed.get("summary", "")
@@ -172,6 +180,10 @@ async def enrich_document_metadata(
     category = parsed.get("category", "Other")
     department = parsed.get("department", "") or None
     complexity_score = float(parsed.get("complexity_score", 0.5))
+    importance_score = float(parsed.get("importance_score", 5.0))
+    risk_score = float(parsed.get("risk_score", 0.0))
+    risk_issues: List[str] = parsed.get("risk_issues", [])
+    executive_summary = parsed.get("executive_summary", "")
     reading_time = _estimate_reading_time(full_text)
 
     try:
@@ -187,6 +199,10 @@ async def enrich_document_metadata(
             existing_summary.summary = summary_text
             existing_summary.reading_time_minutes = reading_time
             existing_summary.complexity_score = complexity_score
+            existing_summary.importance_score = importance_score
+            existing_summary.risk_score = risk_score
+            existing_summary.risk_issues_json = json.dumps(risk_issues)
+            existing_summary.executive_summary = executive_summary
             existing_summary.document_type = document_type
             existing_summary.topics_json = json.dumps(topics)
             db.add(existing_summary)
@@ -198,6 +214,10 @@ async def enrich_document_metadata(
                     summary=summary_text,
                     reading_time_minutes=reading_time,
                     complexity_score=complexity_score,
+                    importance_score=importance_score,
+                    risk_score=risk_score,
+                    risk_issues_json=json.dumps(risk_issues),
+                    executive_summary=executive_summary,
                     document_type=document_type,
                     topics_json=json.dumps(topics),
                 )

@@ -22,7 +22,7 @@ def apply_retention_policies() -> dict:
     """
     Finds documents that have exceeded their retention policy timeframe and processes them.
     If auto_delete is True, the document and its S3/Qdrant assets are deleted.
-    If False, the document status is set to "expired".
+    If False, the document is archived (is_archived = True).
     """
     logger.info("[retention] Starting retention policy sweep...")
     db = SessionLocal()
@@ -48,8 +48,8 @@ def apply_retention_policies() -> dict:
                 # If auto_delete, we only care about documents that haven't been deleted yet
                 pass
             else:
-                # If not auto_delete, we only care about documents not already marked expired
-                query = query.filter(Document.status != "expired")
+                # If not auto_delete, we only care about documents not already archived
+                query = query.filter(Document.is_archived == False)
 
             if policy.folder_id:
                 query = query.filter(Document.folder_id == policy.folder_id)
@@ -94,10 +94,10 @@ def apply_retention_policies() -> dict:
                     logger.info(f"[retention] Auto-deleted document {doc.id} per policy {policy.id}")
 
                 else:
-                    # Just flag as expired
-                    doc.status = "expired"
+                    # Just flag as archived
+                    doc.is_archived = True
                     expired_count += 1
-                    logger.info(f"[retention] Marked document {doc.id} as expired per policy {policy.id}")
+                    logger.info(f"[retention] Marked document {doc.id} as archived per policy {policy.id}")
         
         db.commit()
 

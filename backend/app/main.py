@@ -90,6 +90,16 @@ app.include_router(locks_router_module.router, prefix=f"{settings.API_V1_STR}", 
 app.include_router(acl_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["acl"])
 app.include_router(retention_router_module.router, prefix=f"{settings.API_V1_STR}/admin", tags=["retention"])
 
+# Sprint 13 routes
+from backend.app.api.v1 import comments as comments_router_module
+from backend.app.api.v1 import tasks as tasks_router_module
+from backend.app.api.v1 import notifications as notifications_router_module
+
+app.include_router(comments_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["comments"])
+app.include_router(tasks_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["tasks"])
+app.include_router(tasks_router_module.docs_router, prefix=f"{settings.API_V1_STR}", tags=["tasks"])
+app.include_router(notifications_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["notifications"])
+
 
 
 from backend.app.api.deps import get_current_user_context, CurrentUserContext

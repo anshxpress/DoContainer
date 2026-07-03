@@ -138,8 +138,12 @@ class EntityResponse(BaseModel):
 
 class DocumentMetadataResponse(BaseModel):
     summary: Optional[str] = None
+    executive_summary: Optional[str] = None
     reading_time_minutes: Optional[int] = None
     complexity_score: Optional[float] = None
+    importance_score: Optional[float] = None
+    risk_score: Optional[float] = None
+    risk_issues: List[str] = Field(default_factory=list)
     document_type: Optional[str] = None
     topics: List[str] = Field(default_factory=list)
     keywords: List[KeywordResponse] = Field(default_factory=list)
@@ -159,3 +163,77 @@ class OcrChunkResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+# =============================================================================
+# Sprint 13 — Enterprise Workflow Schemas
+# =============================================================================
+
+class DocumentVersionResponse(BaseModel):
+    id: uuid.UUID
+    document_id: uuid.UUID
+    version_number: int
+    file_size: int
+    change_note: Optional[str] = None
+    created_at: str
+
+    class Config:
+        from_attributes = True
+
+class DocumentCommentBase(BaseModel):
+    content: str
+    parent_id: Optional[uuid.UUID] = None
+
+class DocumentCommentCreate(DocumentCommentBase):
+    pass
+
+class DocumentCommentResponse(DocumentCommentBase):
+    id: uuid.UUID
+    document_id: uuid.UUID
+    user_id: uuid.UUID
+    created_at: str
+    updated_at: str
+
+    class Config:
+        from_attributes = True
+
+class DocumentTaskBase(BaseModel):
+    title: str
+    description: Optional[str] = None
+    assigned_to: uuid.UUID
+    due_date: Optional[str] = None
+
+class DocumentTaskCreate(DocumentTaskBase):
+    pass
+
+class DocumentTaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    due_date: Optional[str] = None
+
+class DocumentTaskResponse(DocumentTaskBase):
+    id: uuid.UUID
+    document_id: uuid.UUID
+    assigned_by: uuid.UUID
+    status: str
+    created_at: str
+    updated_at: str
+
+    class Config:
+        from_attributes = True
+
+class NotificationResponse(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    org_id: uuid.UUID
+    message: str
+    notification_type: str
+    link: Optional[str] = None
+    is_read: bool
+    created_at: str
+
+    class Config:
+        from_attributes = True
+
+class NotificationUpdate(BaseModel):
+    is_read: bool

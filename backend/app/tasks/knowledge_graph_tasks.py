@@ -94,6 +94,36 @@ def build_knowledge_graph_task(self, document_id: str) -> Dict[str, Any]:
                     db.add(edge)
                     edges_created += 1
                     
+        # 3. Topic Overlap
+        if summary and summary.topics_json:
+            import json
+            try:
+                topics = set(json.loads(summary.topics_json))
+                if topics:
+                    other_summaries = db.query(DocumentSummary).filter(
+                        DocumentSummary.org_id == doc.org_id,
+                        DocumentSummary.document_id != doc_uuid,
+                        DocumentSummary.topics_json.isnot(None)
+                    ).all()
+                    
+                    for other in other_summaries:
+                        if other.topics_json:
+                            other_topics = set(json.loads(other.topics_json))
+                            overlap = topics.intersection(other_topics)
+                            if len(overlap) >= 1: # Link if they share at least 1 topic
+                                edge = KnowledgeGraphEdge(
+                                    org_id=doc.org_id,
+                                    source_document_id=doc_uuid,
+                                    target_document_id=other.document_id,
+                                    relationship_type="shared_topic",
+                                    weight=min(0.5 + (0.15 * len(overlap)), 1.0),
+                                    metadata_json=json.dumps({"shared_topics": list(overlap)})
+                                )
+                                db.add(edge)
+                                edges_created += 1
+            except Exception as e:
+                logger.warning(f"Error processing topics for KG: {e}")
+
         db.commit()
         logger.info(f"[build_knowledge_graph_task] Created {edges_created} edges for {document_id}")
         return {"status": "completed", "edges_created": edges_created}

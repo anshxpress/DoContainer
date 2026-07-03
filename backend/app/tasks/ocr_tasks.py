@@ -674,6 +674,10 @@ def metadata_enrichment_task(self, document_id: str) -> Dict[str, Any]:
                     entities_json=dup_summary.entities_json,
                     key_dates_json=dup_summary.key_dates_json,
                     confidence_score=dup_summary.confidence_score,
+                    importance_score=dup_summary.importance_score,
+                    risk_score=dup_summary.risk_score,
+                    risk_issues_json=dup_summary.risk_issues_json,
+                    executive_summary=dup_summary.executive_summary,
                 )
                 db.add(new_summary)
 
@@ -718,6 +722,10 @@ def metadata_enrichment_task(self, document_id: str) -> Dict[str, Any]:
                     entities_json=summary_data.get("entities_json"),
                     key_dates_json=summary_data.get("key_dates_json"),
                     confidence_score=summary_data.get("confidence_score", 0.0),
+                    importance_score=summary_data.get("importance_score", 5.0),
+                    risk_score=summary_data.get("risk_score", 0.0),
+                    risk_issues_json=summary_data.get("risk_issues_json", "[]"),
+                    executive_summary=summary_data.get("executive_summary", ""),
                 ))
             _complete_job(db, job, {"cache_hit": True})
             db.commit()
@@ -794,6 +802,10 @@ def metadata_enrichment_task(self, document_id: str) -> Dict[str, Any]:
                     "entities_json": saved_summary.entities_json,
                     "key_dates_json": saved_summary.key_dates_json,
                     "confidence_score": saved_summary.confidence_score,
+                    "importance_score": saved_summary.importance_score,
+                    "risk_score": saved_summary.risk_score,
+                    "risk_issues_json": saved_summary.risk_issues_json,
+                    "executive_summary": saved_summary.executive_summary,
                 }})  # TTL: 86400s from cache.py prefix rules
         _complete_job(db, job, metrics)
         db.commit()

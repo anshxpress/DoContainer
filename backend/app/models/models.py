@@ -175,6 +175,7 @@ class Document(Base):
     # Hybrid Pipeline: metadata enrichment fields
     category: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     department: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -440,9 +441,16 @@ class DocumentSummary(Base):
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     reading_time_minutes: Mapped[Optional[int]] = mapped_column(nullable=True)
     complexity_score: Mapped[Optional[float]] = mapped_column(nullable=True)  # 0.0 (simple) – 1.0 (complex)
+    importance_score: Mapped[Optional[float]] = mapped_column(nullable=True)  # 1.0 (low) – 10.0 (high)
+    risk_score: Mapped[Optional[float]] = mapped_column(nullable=True)  # 0.0 (safe) – 10.0 (high risk)
+    risk_issues_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # JSON array of risk explanation strings
+    executive_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     language: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     document_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)  # contract/report/research/invoice/etc.
     topics_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array of topic strings
+    entities_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    key_dates_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    confidence_score: Mapped[Optional[float]] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -740,3 +748,67 @@ class DocumentWatermark(Base):
     include_timestamp: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     opacity: Mapped[float] = mapped_column(nullable=False, default=0.15)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# =============================================================================
+# Sprint 13 — Enterprise Workflow
+# =============================================================================
+
+class DocumentComment(Base):
+    """
+    Threaded review comments on documents.
+    """
+    __tablename__ = "document_comments"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    parent_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("document_comments.id", ondelete="CASCADE"), nullable=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    document: Mapped["Document"] = relationship()
+    user: Mapped["User"] = relationship()
+    parent: Mapped[Optional["DocumentComment"]] = relationship(remote_side=[id])
+
+
+class DocumentTask(Base):
+    """
+    Task assignment for documents (e.g., "Review this section").
+    """
+    __tablename__ = "document_tasks"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    assigned_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    assigned_to: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")  # pending, in_progress, completed, cancelled
+    due_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    document: Mapped["Document"] = relationship()
+    assigner: Mapped["User"] = relationship(foreign_keys=[assigned_by])
+    assignee: Mapped["User"] = relationship(foreign_keys=[assigned_to])
+
+
+class Notification(Base):
+    """
+    System notifications for users.
+    """
+    __tablename__ = "notifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    message: Mapped[str] = mapped_column(String(500), nullable=False)
+    notification_type: Mapped[str] = mapped_column(String(50), nullable=False)  # comment, task, approval
+    link: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped["User"] = relationship()
+    organization: Mapped["Organization"] = relationship()

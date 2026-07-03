@@ -37,6 +37,7 @@ class DocumentResponse(BaseModel):
     file_type: str
     file_size: int
     error_message: Optional[str]
+    is_archived: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -862,3 +863,333 @@ def upload_new_version(
     db.refresh(new_version)
 
     return new_version
+
+
+# ---------------------------------------------------------------------------
+# Sprint 12: AI Intelligence Endpoints
+# ---------------------------------------------------------------------------
+import json
+from typing import Dict, Any
+
+class TimelineEvent(BaseModel):
+    timestamp: datetime
+    event_type: str
+    description: str
+    metadata: Optional[Dict[str, Any]] = None
+
+@router.get("/{doc_id}/timeline", response_model=List[TimelineEvent])
+def get_document_timeline(
+    doc_id: uuid.UUID,
+    current_context: CurrentUserContext = Depends(PermissionChecker("documents:read")),
+    db: Session = Depends(get_db)
+):
+    """
+    GET /api/v1/documents/{doc_id}/timeline
+    Returns a chronological timeline of document events (creation, versions, processing, interactions).
+    """
+    db_doc = document_repo.get(db, id=doc_id)
+    if not db_doc or str(db_doc.org_id) != current_context.org_id:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    events = []
+    
+    # 1. Creation event
+    events.append({
+        "timestamp": db_doc.created_at,
+        "event_type": "created",
+        "description": "Document uploaded to system",
+        "metadata": {"file_name": db_doc.name, "file_size": db_doc.file_size}
+    })
+
+    # 2. Versions
+    versions = db.query(DocumentVersion).filter(DocumentVersion.document_id == doc_id).all()
+    for v in versions:
+        events.append({
+            "timestamp": v.created_at,
+            "event_type": "version_upload",
+            "description": f"Version {v.version_number} uploaded",
+            "metadata": {"change_note": v.change_note}
+        })
+
+    # 3. Processing Jobs
+    jobs = db.query(ProcessingJob).filter(ProcessingJob.document_id == doc_id, ProcessingJob.status == "completed").all()
+    for job in jobs:
+        events.append({
+            "timestamp": job.completed_at or job.created_at,
+            "event_type": "processing_completed",
+            "description": f"Pipeline stage '{job.job_type}' completed",
+            "metadata": {"metrics": json.loads(job.metrics_json) if job.metrics_json else None}
+        })
+
+    # Sort descending
+    events.sort(key=lambda x: x["timestamp"], reverse=True)
+    return events
+
+
+@router.get("/topics/cluster", response_model=Dict[str, int])
+def get_topic_clusters(
+    current_context: CurrentUserContext = Depends(PermissionChecker("documents:read")),
+    db: Session = Depends(get_db)
+):
+    """
+    GET /api/v1/documents/topics/cluster
+    Aggregates all document topics for the organization into a frequency map.
+    """
+    summaries = db.query(DocumentSummary).filter(DocumentSummary.org_id == uuid.UUID(current_context.org_id)).all()
+    topic_counts = {}
+    for s in summaries:
+        if s.topics_json:
+            try:
+                topics = json.loads(s.topics_json)
+                for t in topics:
+                    topic_counts[t] = topic_counts.get(t, 0) + 1
+            except Exception:
+                pass
+    
+    # Sort by frequency descending
+    sorted_topics = dict(sorted(topic_counts.items(), key=lambda item: item[1], reverse=True))
+    return sorted_topics
+
+
+class DuplicateCandidate(BaseModel):
+    document: DocumentResponse
+    similarity_score: float
+    
+@router.get("/{doc_id}/duplicates", response_model=List[DuplicateCandidate])
+def get_semantic_duplicates(
+    doc_id: uuid.UUID,
+    limit: int = 5,
+    current_context: CurrentUserContext = Depends(PermissionChecker("documents:read")),
+    db: Session = Depends(get_db)
+):
+    """
+    GET /api/v1/documents/{doc_id}/duplicates
+    Finds semantic duplicates using vector similarity on the document summary.
+    """
+    db_doc = document_repo.get(db, id=doc_id)
+    if not db_doc or str(db_doc.org_id) != current_context.org_id:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    summary = db.query(DocumentSummary).filter(DocumentSummary.document_id == doc_id).first()
+    if not summary or not summary.summary:
+        return []
+
+    from backend.app.services.bge_service import get_bge_service
+    from backend.app.core.qdrant import search_text_chunks
+    
+    bge = get_bge_service()
+    query_vec = bge.encode_query(summary.summary[:1000])
+    
+    chunks = search_text_chunks(
+        query_vector=query_vec,
+        org_id=str(db_doc.org_id),
+        team_ids=[],
+        limit=20
+    )
+    
+    # Aggregate scores by document ID
+    doc_scores = {}
+    for chunk in chunks:
+        t_id = chunk.payload.get("document_id")
+        if t_id and t_id != str(doc_id):
+            if t_id not in doc_scores or chunk.score > doc_scores[t_id]:
+                doc_scores[t_id] = chunk.score
+                
+    # Filter for high similarity (> 0.88 implies strong semantic overlap)
+    candidates = []
+    for t_id, score in doc_scores.items():
+        if score > 0.88:
+            target_doc = document_repo.get(db, id=uuid.UUID(t_id))
+            if target_doc:
+                candidates.append({
+                    "document": target_doc,
+                    "similarity_score": score
+                })
+                
+    candidates.sort(key=lambda x: x["similarity_score"], reverse=True)
+    return candidates[:limit]
+
+
+# ---------------------------------------------------------------------------
+# Sprint 12: AI Intelligence Endpoints
+# ---------------------------------------------------------------------------
+import json
+from typing import Dict, Any
+
+class TimelineEvent(BaseModel):
+    timestamp: datetime
+    event_type: str
+    description: str
+    metadata: Optional[Dict[str, Any]] = None
+
+@router.get("/{doc_id}/timeline", response_model=List[TimelineEvent])
+def get_document_timeline(
+    doc_id: uuid.UUID,
+    current_context: CurrentUserContext = Depends(PermissionChecker("documents:read")),
+    db: Session = Depends(get_db)
+):
+    """
+    GET /api/v1/documents/{doc_id}/timeline
+    Returns a chronological timeline of document events (creation, versions, processing, interactions).
+    """
+    db_doc = document_repo.get(db, id=doc_id)
+    if not db_doc or str(db_doc.org_id) != current_context.org_id:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    events = []
+    
+    # 1. Creation event
+    events.append({
+        "timestamp": db_doc.created_at,
+        "event_type": "created",
+        "description": "Document uploaded to system",
+        "metadata": {"file_name": db_doc.name, "file_size": db_doc.file_size}
+    })
+
+    # 2. Versions
+    versions = db.query(DocumentVersion).filter(DocumentVersion.document_id == doc_id).all()
+    for v in versions:
+        events.append({
+            "timestamp": v.created_at,
+            "event_type": "version_upload",
+            "description": f"Version {v.version_number} uploaded",
+            "metadata": {"change_note": v.change_note}
+        })
+
+    # 3. Processing Jobs
+    jobs = db.query(ProcessingJob).filter(ProcessingJob.document_id == doc_id, ProcessingJob.status == "completed").all()
+    for job in jobs:
+        events.append({
+            "timestamp": job.completed_at or job.created_at,
+            "event_type": "processing_completed",
+            "description": f"Pipeline stage '{job.job_type}' completed",
+            "metadata": {"metrics": json.loads(job.metrics_json) if job.metrics_json else None}
+        })
+
+    # Sort descending
+    events.sort(key=lambda x: x["timestamp"], reverse=True)
+    return events
+
+
+@router.get("/topics/cluster", response_model=Dict[str, int])
+def get_topic_clusters(
+    current_context: CurrentUserContext = Depends(PermissionChecker("documents:read")),
+    db: Session = Depends(get_db)
+):
+    """
+    GET /api/v1/documents/topics/cluster
+    Aggregates all document topics for the organization into a frequency map.
+    """
+    summaries = db.query(DocumentSummary).filter(DocumentSummary.org_id == uuid.UUID(current_context.org_id)).all()
+    topic_counts = {}
+    for s in summaries:
+        if s.topics_json:
+            try:
+                topics = json.loads(s.topics_json)
+                for t in topics:
+                    topic_counts[t] = topic_counts.get(t, 0) + 1
+            except Exception:
+                pass
+    
+    # Sort by frequency descending
+    sorted_topics = dict(sorted(topic_counts.items(), key=lambda item: item[1], reverse=True))
+    return sorted_topics
+
+
+class DuplicateCandidate(BaseModel):
+    document: DocumentResponse
+    similarity_score: float
+    
+@router.get("/{doc_id}/duplicates", response_model=List[DuplicateCandidate])
+def get_semantic_duplicates(
+    doc_id: uuid.UUID,
+    limit: int = 5,
+    current_context: CurrentUserContext = Depends(PermissionChecker("documents:read")),
+    db: Session = Depends(get_db)
+):
+    """
+    GET /api/v1/documents/{doc_id}/duplicates
+    Finds semantic duplicates using vector similarity on the document summary.
+    """
+    db_doc = document_repo.get(db, id=doc_id)
+    if not db_doc or str(db_doc.org_id) != current_context.org_id:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    summary = db.query(DocumentSummary).filter(DocumentSummary.document_id == doc_id).first()
+    if not summary or not summary.summary:
+        return []
+
+    from backend.app.services.bge_service import get_bge_service
+    from backend.app.core.qdrant import search_text_chunks
+    
+    bge = get_bge_service()
+    query_vec = bge.encode_query(summary.summary[:1000])
+    
+    chunks = search_text_chunks(
+        query_vector=query_vec,
+        org_id=str(db_doc.org_id),
+        team_ids=[],
+        limit=20
+    )
+    
+    # Aggregate scores by document ID
+    doc_scores = {}
+    for chunk in chunks:
+        t_id = chunk.payload.get("document_id")
+        if t_id and t_id != str(doc_id):
+            if t_id not in doc_scores or chunk.score > doc_scores[t_id]:
+                doc_scores[t_id] = chunk.score
+                
+    # Filter for high similarity (> 0.88 implies strong semantic overlap)
+    candidates = []
+    for t_id, score in doc_scores.items():
+        if score > 0.88:
+            target_doc = document_repo.get(db, id=uuid.UUID(t_id))
+            if target_doc:
+                candidates.append({
+                    "document": target_doc,
+                    "similarity_score": score
+                })
+                
+    candidates.sort(key=lambda x: x["similarity_score"], reverse=True)
+    return candidates[:limit]
+
+@router.post("/{doc_id}/archive", response_model=DocumentResponse)
+def archive_document(
+    doc_id: uuid.UUID,
+    current_context: CurrentUserContext = Depends(PermissionChecker("documents:write")),
+    db: Session = Depends(get_db)
+):
+    """
+    POST /api/v1/documents/{doc_id}/archive
+    Archives a document.
+    """
+    db_doc = document_repo.get(db, id=doc_id)
+    if not db_doc or str(db_doc.org_id) != current_context.org_id:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    db_doc.is_archived = True
+    db.add(db_doc)
+    db.commit()
+    db.refresh(db_doc)
+    return db_doc
+
+@router.post("/{doc_id}/restore", response_model=DocumentResponse)
+def restore_document(
+    doc_id: uuid.UUID,
+    current_context: CurrentUserContext = Depends(PermissionChecker("documents:write")),
+    db: Session = Depends(get_db)
+):
+    """
+    POST /api/v1/documents/{doc_id}/restore
+    Restores an archived document.
+    """
+    db_doc = document_repo.get(db, id=doc_id)
+    if not db_doc or str(db_doc.org_id) != current_context.org_id:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    db_doc.is_archived = False
+    db.add(db_doc)
+    db.commit()
+    db.refresh(db_doc)
+    return db_doc
