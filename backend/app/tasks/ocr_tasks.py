@@ -133,7 +133,40 @@ def docling_parse_task(self, document_id: str) -> Dict[str, Any]:
         job = _create_job(db, doc.id, doc.org_id, "docling_parse", self.request.id or "")
         db.commit()
 
-        # Determine S3 key (prefer PDF if available)
+        # Sprint 10: Deduplication — skip Docling if an identical file already exists
+        from backend.app.services.storage_optimizer import find_completed_duplicate
+        dup_doc = find_completed_duplicate(db, document_repo.model, doc.file_hash or "", doc.id)
+        if dup_doc:
+            logger.info(
+                "[docling_parse_task] Duplicate of %s detected. Copying %d parse elements.",
+                dup_doc.id, 0,
+            )
+            existing_elements = db.query(DocumentParseElement).filter(
+                DocumentParseElement.document_id == dup_doc.id
+            ).all()
+            if existing_elements:
+                copied = [
+                    DocumentParseElement(
+                        id=uuid.uuid4(),
+                        document_id=doc_uuid,
+                        org_id=doc.org_id,
+                        page_number=e.page_number,
+                        element_type=e.element_type,
+                        content=e.content,
+                        reading_order=e.reading_order,
+                        bbox_x0=e.bbox_x0,
+                        bbox_y0=e.bbox_y0,
+                        bbox_x1=e.bbox_x1,
+                        bbox_y1=e.bbox_y1,
+                    )
+                    for e in existing_elements
+                ]
+                db.bulk_save_objects(copied)
+                _complete_job(db, job, {"elements_created": len(copied), "deduplicated": True})
+                db.commit()
+                logger.info("[docling_parse_task] Copied %d parse elements from duplicate.", len(copied))
+                return {"status": "completed", "elements_created": len(copied), "deduplicated": True}
+
         pdf_s3_key = doc.storage_path
         if doc.file_type.lower() not in ["pdf", "png", "jpg", "jpeg"]:
             pdf_s3_key = f"{os.path.splitext(doc.storage_path)[0]}.pdf"
@@ -160,10 +193,12 @@ def docling_parse_task(self, document_id: str) -> Dict[str, Any]:
 
         # Bulk insert
         elements_created = 0
+        new_elements = []
         for elem in result.elements:
             if not elem.content and elem.element_type not in ("image", "figure"):
                 continue
-            db.add(DocumentParseElement(
+            new_elements.append(DocumentParseElement(
+                id=uuid.uuid4(),
                 document_id=doc_uuid,
                 org_id=doc.org_id,
                 page_number=elem.page_number,
@@ -176,6 +211,9 @@ def docling_parse_task(self, document_id: str) -> Dict[str, Any]:
                 bbox_y1=elem.bbox_y1,
             ))
             elements_created += 1
+        
+        if new_elements:
+            db.bulk_save_objects(new_elements)
 
         metrics = {
             "elements_created": elements_created,
@@ -239,7 +277,35 @@ def ocr_task(self, document_id: str) -> Dict[str, Any]:
         job = _create_job(db, doc.id, doc.org_id, "ocr", self.request.id or "")
         db.commit()
 
-        from backend.app.services.ocr_service import get_ocr_service
+        # Sprint 10: Deduplication — copy OCR chunks from identical document
+        from backend.app.services.storage_optimizer import find_completed_duplicate
+        dup_doc = find_completed_duplicate(db, document_repo.model, doc.file_hash or "", doc.id)
+        if dup_doc:
+            logger.info("[ocr_task] Duplicate of %s detected. Copying OCR chunks.", dup_doc.id)
+            existing_chunks = db.query(OcrChunk).filter(OcrChunk.document_id == dup_doc.id).all()
+            if existing_chunks:
+                copied = [
+                    OcrChunk(
+                        document_id=doc_uuid,
+                        org_id=doc.org_id,
+                        page_number=c.page_number,
+                        text=c.text,
+                        confidence=c.confidence,
+                        language=c.language,
+                        bbox_x0=c.bbox_x0,
+                        bbox_y0=c.bbox_y0,
+                        bbox_x1=c.bbox_x1,
+                        bbox_y1=c.bbox_y1,
+                        reading_order=c.reading_order,
+                    )
+                    for c in existing_chunks
+                ]
+                db.bulk_save_objects(copied)
+                _complete_job(db, job, {"chunks_created": len(copied), "deduplicated": True})
+                db.commit()
+                logger.info("[ocr_task] Copied %d OCR chunks from duplicate.", len(copied))
+                return {"status": "completed", "chunks_created": len(copied), "deduplicated": True}
+
         ocr_svc = get_ocr_service()
 
         pages = document_page_repo.get_by_document(db, document_id=doc_uuid)
@@ -370,66 +436,49 @@ def bge_embed_task(self, document_id: str) -> Dict[str, Any]:
         from backend.app.core.qdrant import qdrant_client
         from qdrant_client.models import PointStruct
 
-        # 1. Deduplication Check
+        # 1. Deduplication Check — reuse ORIGINAL Qdrant point IDs (zero new vectors)
         if doc.file_hash:
             duplicate_doc = db.query(document_repo.model).filter(
                 document_repo.model.file_hash == doc.file_hash,
                 document_repo.model.status == "completed",
                 document_repo.model.id != doc.id
             ).first()
-            
+
             if duplicate_doc:
-                logger.info(f"[bge_embed_task] Found duplicate {duplicate_doc.id} for {document_id}. Reusing embeddings.")
+                logger.info(
+                    "[bge_embed_task] Duplicate of %s detected. Reusing original Qdrant point IDs "
+                    "(zero new vectors written).",
+                    duplicate_doc.id,
+                )
                 dup_chunks = db.query(TextEmbeddingChunk).filter(
                     TextEmbeddingChunk.document_id == duplicate_doc.id
                 ).all()
-                
+
                 if dup_chunks:
-                    dup_point_ids = [str(c.qdrant_point_id) for c in dup_chunks if c.qdrant_point_id]
-                    if dup_point_ids:
-                        points = qdrant_client.retrieve(
-                            collection_name=settings.QDRANT_TEXT_COLLECTION_NAME,
-                            ids=dup_point_ids,
-                            with_payload=True,
-                            with_vectors=True
+                    # Point new DB rows at the SAME Qdrant point IDs — no upsert needed
+                    new_db_chunks = [
+                        TextEmbeddingChunk(
+                            document_id=doc_uuid,
+                            org_id=doc.org_id,
+                            folder_id=doc.folder_id,
+                            page_number=orig.page_number,
+                            chunk_index=orig.chunk_index,
+                            chunk_type=orig.chunk_type,
+                            content=orig.content,
+                            section=orig.section,
+                            heading=orig.heading,
+                            hierarchy=orig.hierarchy,
+                            parent_section=orig.parent_section,
+                            qdrant_point_id=orig.qdrant_point_id,  # reuse same point
+                            language=orig.language,
+                            version=orig.version,
                         )
-                        
-                        new_qdrant_points = []
-                        new_db_chunks = []
-                        for point in points:
-                            new_point_id = str(uuid.uuid4())
-                            new_payload = dict(point.payload or {})
-                            new_payload.update({
-                                "document_id": str(document_id),
-                                "org_id": str(org_id),
-                                "folder_id": folder_id
-                            })
-                            new_qdrant_points.append(PointStruct(
-                                id=new_point_id, vector=point.vector, payload=new_payload
-                            ))
-                            
-                            orig_chunk = next((c for c in dup_chunks if str(c.qdrant_point_id) == str(point.id)), None)
-                            if orig_chunk:
-                                new_db_chunks.append(TextEmbeddingChunk(
-                                    document_id=doc_uuid, org_id=doc.org_id, folder_id=doc.folder_id,
-                                    page_number=orig_chunk.page_number, chunk_index=orig_chunk.chunk_index,
-                                    chunk_type=orig_chunk.chunk_type, content=orig_chunk.content,
-                                    section=orig_chunk.section, heading=orig_chunk.heading,
-                                    hierarchy=orig_chunk.hierarchy, parent_section=orig_chunk.parent_section,
-                                    qdrant_point_id=uuid.UUID(new_point_id), language=orig_chunk.language, version=orig_chunk.version
-                                ))
-                        
-                        if new_qdrant_points:
-                            batch_size = 100
-                            for i in range(0, len(new_qdrant_points), batch_size):
-                                qdrant_client.upsert(
-                                    collection_name=settings.QDRANT_TEXT_COLLECTION_NAME,
-                                    points=new_qdrant_points[i: i + batch_size]
-                                )
-                            db.bulk_save_objects(new_db_chunks)
-                            db.commit()
-                            _complete_job(db, job, {"chunks_created": len(new_db_chunks), "deduplicated": True})
-                            return {"status": "completed", "chunks_created": len(new_db_chunks), "deduplicated": True}
+                        for orig in dup_chunks
+                    ]
+                    db.bulk_save_objects(new_db_chunks)
+                    db.commit()
+                    _complete_job(db, job, {"chunks_created": len(new_db_chunks), "deduplicated": True, "new_qdrant_points": 0})
+                    return {"status": "completed", "chunks_created": len(new_db_chunks), "deduplicated": True, "new_qdrant_points": 0}
 
         # 2. Extract DocumentType for semantic chunker
         from backend.app.models.models import DocumentSummary
@@ -472,58 +521,65 @@ def bge_embed_task(self, document_id: str) -> Dict[str, Any]:
             ).delete(synchronize_session=False)
             db.flush()
 
-            # Batch-encode all text units
-            texts_only = [c.content for c in semantic_chunks]
-            vectors = bge.encode_texts(texts_only, batch_size=settings.BGE_M3_BATCH_SIZE)
-
-            qdrant_points: List[PointStruct] = []
+            batch_size = 32
+            db_chunks = []
+            qdrant_points = []
             chunks_created = 0
-            for chunk_index, (chunk, vector) in enumerate(zip(semantic_chunks, vectors)):
-                qdrant_point_id = str(uuid.uuid4())
-                payload = {
-                    "org_id": org_id,
-                    "folder_id": folder_id,
-                    "document_id": document_id,
-                    "page_number": chunk.page_number,
-                    "chunk_type": chunk.chunk_type,
-                    "language": "en",
-                    "content": chunk.content[:1000],  # payload snippet
-                    "section": chunk.section,
-                    "heading": chunk.heading,
-                    "hierarchy": chunk.hierarchy,
-                    "parent_section": chunk.parent_section,
-                    "version": 1,
-                }
-            
-                qdrant_points.append(
-                    PointStruct(
-                        id=qdrant_point_id,
-                        vector=vector,
-                        payload=payload,
+
+            for i in range(0, len(semantic_chunks), batch_size):
+                batch_chunks = semantic_chunks[i: i + batch_size]
+                texts_only = [c.content for c in batch_chunks]
+                vectors = bge.encode_texts(texts_only, batch_size=batch_size)
+
+                for chunk, vector in zip(batch_chunks, vectors):
+                    qdrant_point_id = str(uuid.uuid4())
+                    payload = {
+                        "org_id": org_id,
+                        "folder_id": folder_id,
+                        "document_id": document_id,
+                        "page_number": chunk.page_number,
+                        "chunk_type": chunk.chunk_type,
+                        "language": "en",
+                        "content": chunk.content[:1000],  # payload snippet
+                        "section": chunk.section,
+                        "heading": chunk.heading,
+                        "hierarchy": chunk.hierarchy,
+                        "parent_section": chunk.parent_section,
+                        "version": 1,
+                    }
+                    qdrant_points.append(
+                        PointStruct(
+                            id=qdrant_point_id,
+                            vector=vector,
+                            payload=payload,
+                        )
                     )
-                )
-                db.add(TextEmbeddingChunk(
-                    document_id=doc_uuid,
-                    org_id=doc.org_id,
-                    folder_id=doc.folder_id,
-                    page_number=chunk.page_number,
-                    chunk_index=chunk_index,
-                    chunk_type=chunk.chunk_type,
-                    content=chunk.content,
-                    section=chunk.section,
-                    heading=chunk.heading,
-                    hierarchy=chunk.hierarchy,
-                    parent_section=chunk.parent_section,
-                    qdrant_point_id=uuid.UUID(qdrant_point_id),
-                    language="en",
-                    version=1,
-                ))
-                chunks_created += 1
+                    db_chunks.append(TextEmbeddingChunk(
+                        id=uuid.uuid4(),
+                        document_id=doc_uuid,
+                        org_id=doc.org_id,
+                        folder_id=doc.folder_id,
+                        page_number=chunk.page_number,
+                        chunk_index=chunks_created,
+                        chunk_type=chunk.chunk_type,
+                        content=chunk.content,
+                        section=chunk.section,
+                        heading=chunk.heading,
+                        hierarchy=chunk.hierarchy,
+                        parent_section=chunk.parent_section,
+                        qdrant_point_id=uuid.UUID(qdrant_point_id),
+                        language="en",
+                        version=1,
+                    ))
+                    chunks_created += 1
+            
+            if db_chunks:
+                db.bulk_save_objects(db_chunks)
 
             # Upsert to Qdrant in batches of 100
-            batch_size = 100
-            for i in range(0, len(qdrant_points), batch_size):
-                batch = qdrant_points[i: i + batch_size]
+            q_batch_size = 100
+            for i in range(0, len(qdrant_points), q_batch_size):
+                batch = qdrant_points[i: i + q_batch_size]
                 try:
                     qdrant_client.upsert(
                         collection_name=settings.QDRANT_TEXT_COLLECTION_NAME,
@@ -531,7 +587,7 @@ def bge_embed_task(self, document_id: str) -> Dict[str, Any]:
                     )
                 except Exception as qd_err:
                     logger.warning(
-                        f"[bge_embed_task] Qdrant upsert batch {i}-{i+batch_size} failed: {qd_err}. "
+                        f"[bge_embed_task] Qdrant upsert batch {i}-{i+q_batch_size} failed: {qd_err}. "
                         "Continuing (dev fallback)."
                     )
 
@@ -592,7 +648,81 @@ def metadata_enrichment_task(self, document_id: str) -> Dict[str, Any]:
         job = _create_job(db, doc.id, doc.org_id, "metadata_enrichment", self.request.id or "")
         db.commit()
 
-        # Build full text from parse elements + OCR chunks
+        # Sprint 10: Metadata dedup — copy from identical file, skip Gemini entirely
+        from backend.app.services.storage_optimizer import find_completed_duplicate
+        from backend.app.core.cache import get_cache, set_cache, generate_cache_key
+        from backend.app.models.models import (
+            DocumentSummary, DocumentKeyword, DocumentEntity
+        )
+
+        dup_doc = find_completed_duplicate(db, document_repo.model, doc.file_hash or "", doc.id)
+        if dup_doc:
+            logger.info("[metadata_enrichment_task] Duplicate of %s. Copying metadata.", dup_doc.id)
+            dup_summary = db.query(DocumentSummary).filter(DocumentSummary.document_id == dup_doc.id).first()
+            dup_keywords = db.query(DocumentKeyword).filter(DocumentKeyword.document_id == dup_doc.id).all()
+            dup_entities = db.query(DocumentEntity).filter(DocumentEntity.document_id == dup_doc.id).all()
+
+            if dup_summary:
+                db.query(DocumentSummary).filter(DocumentSummary.document_id == doc_uuid).delete(synchronize_session=False)
+                new_summary = DocumentSummary(
+                    document_id=doc_uuid,
+                    org_id=doc.org_id,
+                    summary=dup_summary.summary,
+                    document_type=dup_summary.document_type,
+                    language=dup_summary.language,
+                    topics_json=dup_summary.topics_json,
+                    entities_json=dup_summary.entities_json,
+                    key_dates_json=dup_summary.key_dates_json,
+                    confidence_score=dup_summary.confidence_score,
+                )
+                db.add(new_summary)
+
+            if dup_keywords:
+                db.query(DocumentKeyword).filter(DocumentKeyword.document_id == doc_uuid).delete(synchronize_session=False)
+                db.bulk_save_objects([
+                    DocumentKeyword(document_id=doc_uuid, org_id=doc.org_id, keyword=k.keyword, score=k.score)
+                    for k in dup_keywords
+                ])
+
+            if dup_entities:
+                db.query(DocumentEntity).filter(DocumentEntity.document_id == doc_uuid).delete(synchronize_session=False)
+                db.bulk_save_objects([
+                    DocumentEntity(document_id=doc_uuid, org_id=doc.org_id, entity_type=e.entity_type, entity_value=e.entity_value, confidence=e.confidence)
+                    for e in dup_entities
+                ])
+
+            doc.category = dup_doc.category
+            doc.department = dup_doc.department
+            _complete_job(db, job, {"deduplicated": True})
+            db.commit()
+            return {"status": "completed", "deduplicated": True}
+
+        # Sprint 10: Metadata cache — check Redis before calling Gemini
+        meta_cache_key = generate_cache_key("metadata", file_hash=doc.file_hash or doc.name)
+        cached_meta = get_cache(meta_cache_key)
+        if cached_meta:
+            logger.info("[metadata_enrichment_task] Cache HIT for %s", doc.file_hash)
+            # Restore cached metadata into DB
+            from backend.app.services.metadata_service import enrich_document_metadata
+            from backend.app.models.models import DocumentSummary
+            db.query(DocumentSummary).filter(DocumentSummary.document_id == doc_uuid).delete(synchronize_session=False)
+            summary_data = cached_meta.get("summary", {})
+            if summary_data:
+                db.add(DocumentSummary(
+                    document_id=doc_uuid,
+                    org_id=doc.org_id,
+                    summary=summary_data.get("summary", ""),
+                    document_type=summary_data.get("document_type", ""),
+                    language=summary_data.get("language", ""),
+                    topics_json=summary_data.get("topics_json"),
+                    entities_json=summary_data.get("entities_json"),
+                    key_dates_json=summary_data.get("key_dates_json"),
+                    confidence_score=summary_data.get("confidence_score", 0.0),
+                ))
+            _complete_job(db, job, {"cache_hit": True})
+            db.commit()
+            return {"status": "completed", "cache_hit": True}
+
         parse_texts = (
             db.query(DocumentParseElement.content)
             .filter(
@@ -611,7 +741,30 @@ def metadata_enrichment_task(self, document_id: str) -> Dict[str, Any]:
 
         full_text_parts = [r[0] for r in parse_texts if r[0]] + [r[0] for r in ocr_texts if r[0]]
 
-        # Fallback to page text_content if no structured text available
+        if not full_text_parts:
+            logger.info(f"[metadata_enrichment_task] No DB text found for {document_id}, using PyMuPDF direct extraction.")
+            # Use PyMuPDF to extract text directly from the PDF for fast metadata extraction
+            pdf_s3_key = doc.storage_path
+            if doc.file_type.lower() not in ["pdf", "png", "jpg", "jpeg"]:
+                pdf_s3_key = f"{os.path.splitext(doc.storage_path)[0]}.pdf"
+            
+            temp_dir = tempfile.mkdtemp()
+            local_path = os.path.join(temp_dir, f"doc_{doc_uuid}.pdf")
+            try:
+                s3_storage.client.download_file(s3_storage.bucket_name, pdf_s3_key, local_path)
+                import fitz
+                with fitz.open(local_path) as pdf_doc:
+                    for page in pdf_doc:
+                        text = page.get_text("text")
+                        if text:
+                            full_text_parts.append(text)
+            except Exception as e:
+                logger.error(f"[metadata_enrichment_task] PyMuPDF extraction failed: {e}")
+            finally:
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+        # Fallback to page text_content if still no structured text available
         if not full_text_parts:
             pages = document_page_repo.get_by_document(db, document_id=doc_uuid)
             full_text_parts = [p.text_content for p in pages if p.text_content]
@@ -628,7 +781,20 @@ def metadata_enrichment_task(self, document_id: str) -> Dict[str, Any]:
             )
         )
 
-        metrics = {"success": success, "text_length": len(full_text)}
+        # Sprint 10: Cache the metadata result for 24h
+        if success:
+            from backend.app.models.models import DocumentSummary as DS
+            saved_summary = db.query(DS).filter(DS.document_id == doc_uuid).first()
+            if saved_summary:
+                set_cache(meta_cache_key, {"summary": {
+                    "summary": saved_summary.summary,
+                    "document_type": saved_summary.document_type,
+                    "language": saved_summary.language,
+                    "topics_json": saved_summary.topics_json,
+                    "entities_json": saved_summary.entities_json,
+                    "key_dates_json": saved_summary.key_dates_json,
+                    "confidence_score": saved_summary.confidence_score,
+                }})  # TTL: 86400s from cache.py prefix rules
         _complete_job(db, job, metrics)
         db.commit()
         

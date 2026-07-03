@@ -240,7 +240,7 @@ class GeminiClient(BaseLLMClient):
         prompt = (
             "You are a search intelligence engine. Analyze this query: '{query}'.\n"
             "Respond ONLY in valid JSON format with the following keys:\n"
-            "- expanded_query: the original query plus synonyms, acronyms, and abbreviations to improve search.\n"
+            "- expanded_query: the original query plus synonyms, acronyms, and abbreviations, formatted with OR operators for a search engine (e.g., 'original_term OR synonym1 OR synonym2').\n"
             "- intent: 'informational' or 'transactional'.\n"
             "- filters: a dictionary of extracted document types (e.g., 'document_type': 'Invoice') or empty.\n"
             "- suggestions: a list of 3 related follow-up search questions.\n"

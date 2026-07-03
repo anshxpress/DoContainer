@@ -602,7 +602,141 @@ class UserDocumentInteraction(Base):
     count: Mapped[int] = mapped_column(nullable=False, default=1)
     last_interaction_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
-    user: Mapped["User"] = relationship()
+    user: Mapped[Optional["User"]] = relationship()
     document: Mapped["Document"] = relationship()
 
 
+
+# =============================================================================
+# Sprint 11 — Enterprise Security Models
+# =============================================================================
+
+class DocumentVersion(Base):
+    """
+    Tracks every uploaded version of a document.
+    version_number is monotonically increasing per document_id.
+    """
+    __tablename__ = "document_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    version_number: Mapped[int] = mapped_column(nullable=False, default=1)
+    s3_key: Mapped[str] = mapped_column(String(1024), nullable=False)
+    file_size: Mapped[int] = mapped_column(nullable=False)
+    file_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    uploader_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    change_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    document: Mapped["Document"] = relationship()
+    uploader: Mapped[Optional["User"]] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("document_id", "version_number", name="uq_doc_version"),
+    )
+
+
+class DocumentACL(Base):
+    """
+    Per-document access control entries.
+    principal_type: 'user' | 'team' | 'role'
+    permission: 'read' | 'write' | 'approve' | 'download'
+    """
+    __tablename__ = "document_acls"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    principal_type: Mapped[str] = mapped_column(String(20), nullable=False)  # user | team | role
+    principal_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    permission: Mapped[str] = mapped_column(String(50), nullable=False)  # read | write | approve | download
+    granted_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    document: Mapped["Document"] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("document_id", "principal_type", "principal_id", "permission", name="uq_doc_acl_entry"),
+    )
+
+
+class DocumentLock(Base):
+    """
+    Pessimistic file lock. One row per locked document.
+    Lock expires automatically at expires_at; client must renew before expiry.
+    """
+    __tablename__ = "document_locks"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    locked_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    locked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    lock_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    document: Mapped["Document"] = relationship()
+    user: Mapped["User"] = relationship()
+
+
+class ApprovalRequest(Base):
+    """
+    Document approval workflow.
+    status: pending | approved | rejected
+    Submitter sends for review; Approver role decides.
+    """
+    __tablename__ = "approval_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    submitted_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    reviewed_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # pending | approved | rejected
+    submission_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    review_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    document: Mapped["Document"] = relationship()
+    submitter: Mapped["User"] = relationship(foreign_keys=[submitted_by])
+    reviewer: Mapped[Optional["User"]] = relationship(foreign_keys=[reviewed_by])
+
+
+class RetentionPolicy(Base):
+    """
+    Data retention policy. Can be scoped to org or a specific folder.
+    If auto_delete=True, expired documents are deleted automatically.
+    If auto_delete=False, they are flagged as 'expired'.
+    """
+    __tablename__ = "retention_policies"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    folder_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("folders.id", ondelete="CASCADE"), nullable=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    retain_days: Mapped[int] = mapped_column(nullable=False)  # documents older than this are acted upon
+    auto_delete: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    organization: Mapped["Organization"] = relationship()
+
+
+class DocumentWatermark(Base):
+    """
+    Watermark configuration for a document (or folder-level default).
+    Applied dynamically at download time.
+    """
+    __tablename__ = "document_watermarks"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4, server_default=func.uuid_generate_v4())
+    document_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=True, unique=True, index=True)
+    folder_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("folders.id", ondelete="CASCADE"), nullable=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    watermark_text: Mapped[str] = mapped_column(String(255), nullable=False, default="CONFIDENTIAL")
+    include_username: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    include_timestamp: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    opacity: Mapped[float] = mapped_column(nullable=False, default=0.15)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

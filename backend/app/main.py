@@ -67,6 +67,13 @@ from backend.app.api.v1 import documents as documents_router_module
 from backend.app.api.v1 import folders as folders_router_module
 from backend.app.api.v1 import analytics as analytics_router_module
 from backend.app.api.v1 import admin as admin_router_module
+from backend.app.api.v1 import storage as storage_router_module
+
+# Sprint 11 modules
+from backend.app.api.v1 import approvals as approvals_router_module
+from backend.app.api.v1 import locks as locks_router_module
+from backend.app.api.v1 import acl as acl_router_module
+from backend.app.api.v1 import retention as retention_router_module
 
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["authentication"])
 app.include_router(search_router_module.router, prefix=f"{settings.API_V1_STR}/search", tags=["search"])
@@ -75,6 +82,13 @@ app.include_router(documents_router_module.router, prefix=f"{settings.API_V1_STR
 app.include_router(folders_router_module.router, prefix=f"{settings.API_V1_STR}/folders", tags=["folders"])
 app.include_router(analytics_router_module.router, prefix=f"{settings.API_V1_STR}/analytics", tags=["analytics"])
 app.include_router(admin_router_module.router, prefix=f"{settings.API_V1_STR}/admin", tags=["admin"])
+app.include_router(storage_router_module.router, prefix=f"{settings.API_V1_STR}/admin", tags=["storage"])
+
+# Sprint 11 routes
+app.include_router(approvals_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["approvals"])
+app.include_router(locks_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["locks"])
+app.include_router(acl_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["acl"])
+app.include_router(retention_router_module.router, prefix=f"{settings.API_V1_STR}/admin", tags=["retention"])
 
 
 
@@ -101,3 +115,16 @@ def health_check():
     Basic health check endpoint for load balancers and orchestrators.
     """
     return {"status": "ok", "service": "docscope-api"}
+
+
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger = logging.getLogger("docscope")
+    logger.exception(f"Unhandled error on {request.method} {request.url}", exc_info=exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error"}
+    )

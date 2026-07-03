@@ -1,9 +1,11 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { apiClient } from "../../../lib/apiClient";
 import {
   Users, Shield, Building2, Plus, MoreHorizontal,
-  Check, X, Search, Mail, UserCheck, ChevronDown, Loader2
+  Check, X, Search, Mail, UserCheck, ChevronDown, Loader2,
+  Activity, Clock, Trash2, Save
 } from "lucide-react";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -11,6 +13,8 @@ import {
 type AdminUser = { id: string; name: string; email: string; role: string; team: string; status: string; initials: string; joined: string };
 type AdminTeam = { id: string; name: string; members: number; folders: number; acl: string };
 type AdminPermission = { action: string; desc: string; roles: Record<string, boolean> };
+type AuditLog = { id: string; user_id: string | null; ip_address: string | null; action: string; resource: string; metadata: string; created_at: string };
+type RetentionPolicy = { id: string; name: string; folder_id: string | null; retain_days: number; auto_delete: boolean };
 
 const ROLE_COLORS: Record<string, string> = {
   "Organization Admin": "bg-emerald-500/15 text-emerald-400 border-emerald-500/20",
@@ -19,7 +23,7 @@ const ROLE_COLORS: Record<string, string> = {
   "Viewer":             "bg-zinc-800/50 text-zinc-500 border-zinc-700/20",
 };
 
-type Tab = "users" | "teams" | "permissions";
+type Tab = "users" | "teams" | "permissions" | "audit" | "retention";
 
 // ─── Users Tab ────────────────────────────────────────────────────────────────
 
@@ -224,12 +228,147 @@ function PermissionsTab({ permissions }: { permissions: AdminPermission[] }) {
   );
 }
 
-// ─── Main Admin Page ──────────────────────────────────────────────────────────
+
+// ─── Audit Logs Tab ──────────────────────────────────────────────────────────
+function AuditTab({ logs }: { logs: AuditLog[] }) {
+  const [search, setSearch] = useState("");
+  const filtered = logs.filter((l) => l.action.toLowerCase().includes(search.toLowerCase()) || l.resource.toLowerCase().includes(search.toLowerCase()));
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div className="relative flex-1 max-w-sm">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search audit logs..."
+            className="w-full pl-9 pr-4 py-2.5 rounded-xl bg-zinc-900/80 border border-white/8 text-zinc-300 placeholder-zinc-600 text-sm focus:outline-none focus:border-emerald-500/40 transition-all"
+          />
+        </div>
+      </div>
+      <div className="glass-panel rounded-2xl overflow-hidden border border-white/5">
+        <table className="w-full text-left">
+          <thead>
+            <tr className="border-b border-white/5 bg-zinc-900/40 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+              <th className="p-4 pl-5">Timestamp</th>
+              <th className="p-4">Action</th>
+              <th className="p-4">User ID / IP</th>
+              <th className="p-4">Resource</th>
+              <th className="p-4">Metadata</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {filtered.map((log) => (
+              <tr key={log.id} className="hover:bg-white/[0.02] transition-colors">
+                <td className="p-4 pl-5 text-xs text-zinc-400">{new Date(log.created_at).toLocaleString()}</td>
+                <td className="p-4 text-xs font-semibold text-zinc-200">{log.action}</td>
+                <td className="p-4 text-xs text-zinc-500">{log.user_id ? log.user_id.slice(0,8) : log.ip_address}</td>
+                <td className="p-4 text-xs text-zinc-400 truncate max-w-[200px]" title={log.resource}>{log.resource}</td>
+                <td className="p-4 text-[10px] font-mono text-zinc-500 truncate max-w-[200px]" title={log.metadata}>{log.metadata}</td>
+              </tr>
+            ))}
+            {filtered.length === 0 && (
+              <tr><td colSpan={5} className="p-8 text-center text-zinc-500 text-sm">No audit logs found.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ─── Retention Policies Tab ──────────────────────────────────────────────────────────
+function RetentionTab({ policies, onRefresh }: { policies: RetentionPolicy[], onRefresh: () => void }) {
+  const [isCreating, setIsCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [days, setDays] = useState(30);
+  const [autoDel, setAutoDel] = useState(false);
+
+  const handleCreate = async () => {
+    try {
+      await apiClient.post("/api/v1/retention/policies", { name, retain_days: days, auto_delete: autoDel });
+      setIsCreating(false);
+      onRefresh();
+    } catch (err) {}
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex justify-between items-center">
+        <p className="text-sm text-zinc-400">Manage data retention lifecycle policies.</p>
+        <button onClick={() => setIsCreating(true)} className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-all">
+          <Plus size={14} /> Create Policy
+        </button>
+      </div>
+
+      {isCreating && (
+        <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-4 mb-4">
+          <h3 className="text-sm font-semibold text-zinc-200">New Retention Policy</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="Policy Name" className="bg-zinc-900/80 border border-white/8 text-sm px-3 py-2 rounded-lg text-white" />
+            <input type="number" value={days} onChange={e => setDays(Number(e.target.value))} placeholder="Days to retain" className="bg-zinc-900/80 border border-white/8 text-sm px-3 py-2 rounded-lg text-white" />
+            <label className="flex items-center gap-2 text-sm text-zinc-300">
+              <input type="checkbox" checked={autoDel} onChange={e => setAutoDel(e.target.checked)} className="rounded border-zinc-700 bg-zinc-800" />
+              Auto-delete (Hard Delete)
+            </label>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setIsCreating(false)} className="px-3 py-1.5 text-xs text-zinc-400 hover:text-white">Cancel</button>
+            <button onClick={handleCreate} className="px-3 py-1.5 text-xs bg-emerald-600 rounded text-white">Save Policy</button>
+          </div>
+        </div>
+      )}
+
+      <div className="glass-panel rounded-2xl overflow-hidden border border-white/5">
+        <table className="w-full text-left">
+          <thead>
+            <tr className="border-b border-white/5 bg-zinc-900/40 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+              <th className="p-4 pl-5">Policy Name</th>
+              <th className="p-4">Retention Window</th>
+              <th className="p-4">Action Type</th>
+              <th className="p-4">Target Folder</th>
+              <th className="p-4 text-right pr-5">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {policies.map(p => (
+              <tr key={p.id} className="hover:bg-white/[0.02]">
+                <td className="p-4 pl-5 text-sm font-semibold text-zinc-200">{p.name}</td>
+                <td className="p-4 text-sm text-zinc-400">{p.retain_days} days</td>
+                <td className="p-4 text-xs">
+                  <span className={`px-2 py-1 rounded-md ${p.auto_delete ? 'bg-red-500/15 text-red-400' : 'bg-yellow-500/15 text-yellow-400'}`}>
+                    {p.auto_delete ? 'Hard Delete' : 'Soft Expire'}
+                  </span>
+                </td>
+                <td className="p-4 text-sm text-zinc-500">{p.folder_id ? p.folder_id.slice(0,8) : "Org-wide"}</td>
+                <td className="p-4 text-right pr-5">
+                  <button onClick={async () => {
+                    try {
+                      await apiClient.delete(`/api/v1/retention/policies/${p.id}`);
+                      onRefresh();
+                    } catch (e) {}
+                  }} className="p-1.5 rounded-lg text-red-400 hover:bg-white/5"><Trash2 size={16} /></button>
+                </td>
+              </tr>
+            ))}
+            {policies.length === 0 && <tr><td colSpan={5} className="p-8 text-center text-zinc-500 text-sm">No retention policies.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Admin Page
+
 
 const TABS = [
   { id: "users",       label: "Users",       icon: Users },
   { id: "teams",       label: "Teams",       icon: Building2 },
   { id: "permissions", label: "Permissions", icon: Shield },
+  { id: "audit",       label: "Audit Logs",  icon: Activity },
+  { id: "retention",   label: "Retention",   icon: Clock },
 ];
 
 export default function AdminPage() {
@@ -239,6 +378,8 @@ export default function AdminPage() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [teams, setTeams] = useState<AdminTeam[]>([]);
   const [permissions, setPermissions] = useState<AdminPermission[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [retentionPolicies, setRetentionPolicies] = useState<RetentionPolicy[]>([]);
 
   useEffect(() => {
     const fetchAdminData = async () => {
@@ -249,27 +390,19 @@ export default function AdminPage() {
       }
       
       try {
-        const headers = { Authorization: `Bearer ${token}` };
-        
-        const [usersRes, teamsRes, permsRes] = await Promise.all([
-          fetch("/api/v1/admin/users", { headers }),
-          fetch("/api/v1/admin/teams", { headers }),
-          fetch("/api/v1/admin/roles", { headers })
+        const [usersData, teamsData, permsData, auditData, retData] = await Promise.all([
+          apiClient.get("/api/v1/admin/users"),
+          apiClient.get("/api/v1/admin/teams"),
+          apiClient.get("/api/v1/admin/roles"),
+          apiClient.get("/api/v1/admin/audit"),
+          apiClient.get("/api/v1/retention/policies")
         ]);
-        
-        if (usersRes.status === 401 || teamsRes.status === 401 || permsRes.status === 401) {
-          localStorage.removeItem("docscope_token");
-          window.location.href = "/login";
-          return;
-        }
-
-        const usersData = await usersRes.json();
-        const teamsData = await teamsRes.json();
-        const permsData = await permsRes.json();
         
         setUsers(Array.isArray(usersData) ? usersData : []);
         setTeams(Array.isArray(teamsData) ? teamsData : []);
         setPermissions(Array.isArray(permsData) ? permsData : []);
+        setAuditLogs(Array.isArray(auditData) ? auditData : []);
+        setRetentionPolicies(Array.isArray(retData) ? retData : []);
       } catch (err) {
         console.error("Failed to fetch admin data", err);
       } finally {
@@ -347,6 +480,8 @@ export default function AdminPage() {
         {activeTab === "users"       && <UsersTab users={users} />}
         {activeTab === "teams"       && <TeamsTab teams={teams} />}
         {activeTab === "permissions" && <PermissionsTab permissions={permissions} />}
+        {activeTab === "audit"       && <AuditTab logs={auditLogs} />}
+        {activeTab === "retention"   && <RetentionTab policies={retentionPolicies} onRefresh={() => window.location.reload()} />}
       </div>
     </div>
   );

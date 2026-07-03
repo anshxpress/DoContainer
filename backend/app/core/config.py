@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     ENABLE_RERANKER: bool = Field(default=False, env="ENABLE_RERANKER")
     ENABLE_CLAMAV: bool = Field(default=True, env="ENABLE_CLAMAV")
 
+    # Telemetry Settings
+    OTEL_CONSOLE_EXPORT: bool = Field(default=False, env="OTEL_CONSOLE_EXPORT")
+
     class Config:
         case_sensitive = True
         env_file = ".env"

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { apiClient } from "../../lib/apiClient";
 import { 
   FileText, 
   Users, 
@@ -130,34 +131,12 @@ export default function Dashboard() {
 
     const fetchAnalytics = async () => {
       try {
-        const token = typeof window !== "undefined" ? localStorage.getItem("docscope_token") : null;
-        if (!token) {
-            setError("No authorization token found. Please log in.");
-            setLoading(false);
-            return;
-        }
-        const resp = await fetch("/api/v1/analytics/dashboard", {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        });
-        if (resp.ok) {
-          const result = await resp.json();
-          setData(result);
-          setLoading(false);
-          return;
-        } else if (resp.status === 401) {
-            localStorage.removeItem("docscope_token");
-            window.location.href = "/login";
-            return;
-        } else {
-            const errData = await resp.json();
-            setError(errData.detail || "Failed to fetch analytics from backend.");
-            setLoading(false);
-        }
+        const result = await apiClient.get("/api/v1/analytics/dashboard");
+        setData(result);
+        setLoading(false);
       } catch (err: any) {
         console.error("Failed to fetch analytics from backend", err);
-        setError(err.message || "Network error fetching analytics.");
+        setError(err.message || "Failed to fetch analytics from backend.");
         setLoading(false);
       }
     };

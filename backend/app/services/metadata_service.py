@@ -210,9 +210,10 @@ async def enrich_document_metadata(
             DocumentKeyword.document_id == doc_uuid
         ).delete(synchronize_session=False)
 
+        new_keywords = []
         for idx, kw in enumerate(keywords):
             if kw and isinstance(kw, str):
-                db.add(
+                new_keywords.append(
                     DocumentKeyword(
                         document_id=doc_uuid,
                         org_id=org_uuid,
@@ -220,6 +221,8 @@ async def enrich_document_metadata(
                         score=round(1.0 - (idx / max(len(keywords), 1)), 4),
                     )
                 )
+        if new_keywords:
+            db.bulk_save_objects(new_keywords)
 
         # ------------------------------------------------------------------
         # 4. Replace DocumentEntities (delete + insert)
@@ -229,11 +232,12 @@ async def enrich_document_metadata(
         ).delete(synchronize_session=False)
 
         valid_types = {"PERSON", "ORG", "DATE", "MONEY", "LOCATION", "PRODUCT", "LAW"}
+        new_entities = []
         for ent in entities:
             ent_text = str(ent.get("text", "")).strip()[:500]
             ent_type = str(ent.get("type", "ORG")).upper()
             if ent_text and ent_type in valid_types:
-                db.add(
+                new_entities.append(
                     DocumentEntity(
                         document_id=doc_uuid,
                         org_id=org_uuid,
@@ -241,6 +245,8 @@ async def enrich_document_metadata(
                         entity_type=ent_type,
                     )
                 )
+        if new_entities:
+            db.bulk_save_objects(new_entities)
 
         # ------------------------------------------------------------------
         # 5. Update Document.category / .department

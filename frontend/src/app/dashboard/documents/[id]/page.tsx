@@ -1,11 +1,16 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import { apiClient } from "../../../../lib/apiClient";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft, FileText, Loader2, MessageSquare, Info, Download, Maximize2, Share2, CornerDownRight
+  ArrowLeft, FileText, Loader2, MessageSquare, Info, Download, Maximize2, Share2, CornerDownRight,
+  Shield, Lock, Unlock, Users, CheckCircle, Plus, Trash2, ShieldAlert
 } from "lucide-react";
 import ReactMarkdown from 'react-markdown';
+
+type AclEntry = { id: string; principal_type: string; principal_id: string; permission: string; };
+type LockInfo = { locked: boolean; locked_by: string | null; is_own_lock: boolean };
 
 type DocumentDetail = {
   id: string;
@@ -35,8 +40,12 @@ export default function DocumentViewerPage() {
   const [document, setDocument] = useState<DocumentDetail | null>(null);
   const [pages, setPages] = useState<DocumentPage[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"chat" | "details">("chat");
+  const [activeTab, setActiveTab] = useState<"chat" | "details" | "security">("chat");
 
+  // Security state
+  const [acls, setAcls] = useState<AclEntry[]>([]);
+  const [lockInfo, setLockInfo] = useState<LockInfo | null>(null);
+  
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -47,39 +56,85 @@ export default function DocumentViewerPage() {
   useEffect(() => {
     fetchDocumentDetails();
     fetchDocumentPages();
+    fetchSecurityData();
   }, [docId]);
+
+  const fetchSecurityData = async () => {
+    try {
+      setLockInfo(await apiClient.get(`/api/v1/documents/${docId}/lock`));
+      setAcls(await apiClient.get(`/api/v1/documents/${docId}/acl`));
+    } catch (e) {}
+  };
+
+  const handleDownload = async () => {
+    const watermark = prompt("Advanced: Enter custom watermark text, or leave blank for default (email).");
+    const url = `/api/v1/documents/${docId}/download` + (watermark ? `?watermark_text=${encodeURIComponent(watermark)}` : "");
+    try {
+      const data = await apiClient.get(url);
+      if (data.download_url) window.location.href = data.download_url;
+    } catch (e) {
+      alert("Download failed or forbidden.");
+    }
+  };
+
+  const toggleLock = async () => {
+    try {
+      if (lockInfo?.is_own_lock) {
+        await apiClient.delete(`/api/v1/documents/${docId}/lock`);
+      } else {
+        await apiClient.post(`/api/v1/documents/${docId}/lock`);
+      }
+      fetchSecurityData();
+    } catch (e) {}
+  };
+
+  const submitApproval = async () => {
+    const note = prompt("Enter submission note for reviewers:");
+    try {
+      await apiClient.post(`/api/v1/approval/${docId}/submit`, { submission_note: note || "" });
+      alert("Submitted for approval!");
+    } catch (e) {
+      alert("Failed to submit.");
+    }
+  };
+
+  const addAcl = async () => {
+    const principal_type = prompt("Enter principal_type (user, team, role):", "user");
+    if (!principal_type) return;
+    const principal_id = prompt("Enter principal_id (UUID):");
+    if (!principal_id) return;
+    const permission = prompt("Enter permission (read, write, approve, download):", "read");
+    if (!permission) return;
+    
+    try {
+      await apiClient.post(`/api/v1/documents/${docId}/acl`, { principal_type, principal_id, permission });
+      fetchSecurityData();
+    } catch (e) {}
+  };
+
+  const removeAcl = async (entryId: string) => {
+    try {
+      await apiClient.delete(`/api/v1/documents/${docId}/acl/${entryId}`);
+      fetchSecurityData();
+    } catch (e) {}
+  };
+
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
 
   const fetchDocumentDetails = async () => {
-    const token = localStorage.getItem("docscope_token");
-    if (!token) return;
-
     try {
-      const res = await fetch(`/api/v1/documents/${docId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.ok) {
-        setDocument(await res.json());
-      }
+      setDocument(await apiClient.get(`/api/v1/documents/${docId}`));
     } catch (e) {
       console.error("Failed to fetch document", e);
     }
   };
 
   const fetchDocumentPages = async () => {
-    const token = localStorage.getItem("docscope_token");
-    if (!token) return;
-
     try {
-      const res = await fetch(`/api/v1/documents/${docId}/pages`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.ok) {
-        setPages(await res.json());
-      }
+      setPages(await apiClient.get(`/api/v1/documents/${docId}/pages`));
     } catch (e) {
       console.error("Failed to fetch pages", e);
     } finally {
@@ -198,6 +253,14 @@ export default function DocumentViewerPage() {
                 </span>
                 <span>•</span>
                 <span>{(document.file_size / 1024 / 1024).toFixed(2)} MB</span>
+                {lockInfo?.locked && (
+                  <>
+                    <span>•</span>
+                    <span className="flex items-center gap-1 text-red-400 bg-red-500/10 px-2 py-0.5 rounded-full">
+                      <Lock size={12} /> {lockInfo.is_own_lock ? "Locked by You" : "Locked"}
+                    </span>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -220,7 +283,7 @@ export default function DocumentViewerPage() {
           <button className="p-2 hover:bg-zinc-900 rounded-lg text-zinc-400 hover:text-white transition-colors" title="Share">
             <Share2 size={18} />
           </button>
-          <button className="p-2 hover:bg-zinc-900 rounded-lg text-zinc-400 hover:text-white transition-colors" title="Download">
+          <button onClick={handleDownload} className="p-2 hover:bg-zinc-900 rounded-lg text-zinc-400 hover:text-white transition-colors" title="Download (Watermarked)">
             <Download size={18} />
           </button>
         </div>
@@ -268,6 +331,14 @@ export default function DocumentViewerPage() {
               }`}
             >
               <MessageSquare size={16} /> Chat
+            </button>
+            <button 
+              onClick={() => setActiveTab("security")}
+              className={`flex-1 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                activeTab === "security" ? "text-emerald-400 border-b-2 border-emerald-400" : "text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              <Shield size={16} /> Security
             </button>
             <button 
               onClick={() => setActiveTab("details")}
@@ -347,6 +418,55 @@ export default function DocumentViewerPage() {
               </div>
             )}
 
+
+            {/* Security Tab */}
+            {activeTab === "security" && (
+              <div className="absolute inset-0 overflow-y-auto p-6 text-sm text-zinc-400 space-y-8 custom-scrollbar">
+                
+                {/* Actions */}
+                <div>
+                  <h4 className="text-zinc-200 font-medium mb-3 flex items-center gap-2"><ShieldAlert size={16} /> Actions</h4>
+                  <div className="flex flex-col gap-3">
+                    <button onClick={toggleLock} className="flex items-center justify-between p-3 rounded-xl bg-zinc-900/50 hover:bg-zinc-800 transition-colors border border-white/5">
+                      <span className="flex items-center gap-2 text-zinc-200">
+                        {lockInfo?.is_own_lock ? <Unlock size={16} className="text-yellow-400" /> : <Lock size={16} className="text-red-400" />}
+                        {lockInfo?.is_own_lock ? "Release Lock" : "Lock Document"}
+                      </span>
+                    </button>
+                    <button onClick={submitApproval} className="flex items-center justify-between p-3 rounded-xl bg-zinc-900/50 hover:bg-zinc-800 transition-colors border border-white/5">
+                      <span className="flex items-center gap-2 text-zinc-200"><CheckCircle size={16} className="text-emerald-400" /> Request Approval</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* ACLs */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-zinc-200 font-medium flex items-center gap-2"><Users size={16} /> Access Control</h4>
+                    <button onClick={addAcl} className="p-1.5 hover:bg-white/10 rounded-lg text-emerald-400"><Plus size={14} /></button>
+                  </div>
+                  <div className="space-y-2">
+                    {acls.length === 0 ? (
+                      <p className="text-xs text-zinc-500 italic">Inheriting folder/org permissions.</p>
+                    ) : (
+                      acls.map(acl => (
+                        <div key={acl.id} className="flex items-center justify-between p-2.5 rounded-lg bg-zinc-900/50 border border-white/5">
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold text-zinc-200 capitalize">{acl.principal_type}</p>
+                            <p className="text-[10px] text-zinc-500 truncate" title={acl.principal_id}>{acl.principal_id.slice(0,8)}...</p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="px-2 py-0.5 rounded bg-white/5 text-[10px] text-zinc-300 font-mono">{acl.permission}</span>
+                            <button onClick={() => removeAcl(acl.id)} className="text-zinc-600 hover:text-red-400 p-1"><Trash2 size={12} /></button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+              </div>
+            )}
             {/* Details Tab */}
             {activeTab === "details" && (
               <div className="absolute inset-0 overflow-y-auto p-6 text-sm text-zinc-400 space-y-6">

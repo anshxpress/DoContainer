@@ -7,15 +7,17 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from celery import chain
+from celery import chain, chord, group
 import time
 
-from backend.app.api.deps import get_current_user_context, CurrentUserContext, PermissionChecker
+from backend.app.api.deps import get_current_user_context, CurrentUserContext, PermissionChecker, check_document_permission
 from backend.app.core.db import get_db
 from backend.app.core.s3 import s3_storage
+from backend.app.services.document_service import document_service
 from backend.app.repositories.base_repo import document_repo
-from backend.app.models.models import DocumentPage, OcrChunk, DocumentSummary, DocumentKeyword, DocumentEntity, KnowledgeGraphEdge, UserDocumentInteraction
+from backend.app.models.models import DocumentPage, OcrChunk, DocumentSummary, DocumentKeyword, DocumentEntity, KnowledgeGraphEdge, UserDocumentInteraction, DocumentLock, DocumentVersion
 from backend.app.services.validation import validate_file_size, validate_file_type, ValidationError
+from backend.app.services.security_service import generate_signed_download_url, get_document_watermark_config, apply_watermark_to_pdf, upload_bytes_with_sse
 from backend.app.tasks.tasks import scan_malware_task, convert_to_pdf_task, render_pages_task, embed_and_index_task
 from backend.app.tasks.ocr_tasks import docling_parse_task, ocr_task, bge_embed_task, metadata_enrichment_task
 from backend.app.schemas.schemas import OcrChunkResponse, DocumentMetadataResponse, KeywordResponse, EntityResponse
@@ -49,7 +51,7 @@ class DocumentUpdate(BaseModel):
 # --- Endpoints ---
 
 @router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
-async def upload_document(
+def upload_document(
     file: UploadFile = File(...),
     folder_id: Optional[str] = Form(None),
     current_context: CurrentUserContext = Depends(PermissionChecker("documents:write")),
@@ -65,7 +67,7 @@ async def upload_document(
         raise HTTPException(status_code=400, detail="Invalid folder_id format.")
 
     # 1. Read file content for validation
-    file_bytes = await file.read()
+    file_bytes = file.file.read()
     file_size = len(file_bytes)
 
     try:
@@ -77,7 +79,7 @@ async def upload_document(
         raise HTTPException(status_code=422, detail=val_err.message)
 
     # Reset file cursor for uploading
-    await file.seek(0)
+    file.file.seek(0)
     
     # Calculate file hash
     file_hash = hashlib.sha256(file_bytes).hexdigest()
@@ -113,6 +115,21 @@ async def upload_document(
 
     try:
         db_doc = document_repo.create(db, obj_in=doc_in)
+        
+        # Sprint 11: Record initial version
+        initial_version = DocumentVersion(
+            document_id=db_doc.id,
+            org_id=db_doc.org_id,
+            version_number=1,
+            s3_key=s3_key,
+            file_size=file_size,
+            file_hash=file_hash,
+            uploader_id=uuid.UUID(current_context.user.id),
+            change_note="Initial upload"
+        )
+        db.add(initial_version)
+        db.commit()
+
         # Log storage size usage metric
         from backend.app.services.metrics_service import log_usage_metric
         log_usage_metric(
@@ -141,31 +158,36 @@ async def upload_document(
         analyzer = DocumentAnalyzer(file_bytes=file_bytes, file_name=file.filename, file_type=ext)
         decision = analyzer.analyze()
         logger.info(f"Document {doc_id} analysis decision: {decision.model_dump_json()}")
-
-        pipeline_tasks = []
-
+        # Build ingestion pipeline based on decision
+        prep_tasks = []
         if settings.ENABLE_CLAMAV:
-            pipeline_tasks.append(scan_malware_task.s(str(doc_id), s3_key))
-            first_vision_task = convert_to_pdf_task.s(str(doc_id))
+            prep_tasks.append(scan_malware_task.s(str(doc_id), s3_key))
+            prep_tasks.append(convert_to_pdf_task.s(str(doc_id)))
         else:
-            first_vision_task = convert_to_pdf_task.s({"status": "clean", "s3_key": s3_key}, str(doc_id))
+            prep_tasks.append(convert_to_pdf_task.s({"status": "clean", "s3_key": s3_key}, str(doc_id)))
 
+        parallel_tasks = []
+        
         if decision.run_vision and settings.ENABLE_VISION:
-            pipeline_tasks.append(first_vision_task)
-            pipeline_tasks.append(render_pages_task.s(str(doc_id)))
-            pipeline_tasks.append(embed_and_index_task.s(str(doc_id)))
-
+            if decision.run_ocr and settings.ENABLE_OCR:
+                vision_branch = chain(render_pages_task.s(str(doc_id)), embed_and_index_task.s(str(doc_id)), ocr_task.si(str(doc_id)))
+            else:
+                vision_branch = chain(render_pages_task.s(str(doc_id)), embed_and_index_task.s(str(doc_id)))
+            parallel_tasks.append(vision_branch)
+            
         if decision.run_docling and settings.DOCLING_ENABLED:
-            pipeline_tasks.append(docling_parse_task.si(str(doc_id)))
+            parallel_tasks.append(docling_parse_task.si(str(doc_id)))
             
-        if decision.run_ocr and settings.ENABLE_OCR:
-            pipeline_tasks.append(ocr_task.si(str(doc_id)))
-            
-        pipeline_tasks.append(metadata_enrichment_task.si(str(doc_id)))
-        pipeline_tasks.append(bge_embed_task.si(str(doc_id)))
-
-        if pipeline_tasks:
-            chain(*pipeline_tasks).apply_async()
+        parallel_tasks.append(metadata_enrichment_task.si(str(doc_id)))
+        
+        # Dispatch workflow
+        if parallel_tasks:
+            workflow = chain(
+                *prep_tasks,
+                chord(group(*parallel_tasks), bge_embed_task.si(str(doc_id)))
+            )
+            workflow.apply_async()
+            document_repo.update_status(db, doc_id=doc_id, status="queued")
             logger.info(f"Scheduled adaptive ingestion pipeline for document {doc_id}.")
         else:
             logger.warning(f"No pipeline tasks selected for document {doc_id}.")
@@ -189,18 +211,7 @@ def list_documents(
     GET /api/v1/documents
     Lists all documents belonging to the user's organization. Supports optional folder filtering.
     """
-    query = db.query(document_repo.model).filter(document_repo.model.org_id == uuid.UUID(current_context.org_id))
-    if folder_id:
-        if folder_id.lower() == "root":
-            query = query.filter(document_repo.model.folder_id == None)
-        else:
-            try:
-                query = query.filter(document_repo.model.folder_id == uuid.UUID(folder_id))
-            except ValueError:
-                pass
-    
-    query = query.order_by(document_repo.model.created_at.desc())
-    docs = query.offset(skip).limit(limit).all()
+    docs = document_service.get_document_list(db, current_context, folder_id, skip, limit)
     return docs
 
 
@@ -213,10 +224,7 @@ def get_processing_documents(
     GET /api/v1/documents/processing
     Retrieves all documents currently in queued, processing, or failed state for the organization.
     """
-    docs = db.query(document_repo.model).filter(
-        document_repo.model.org_id == uuid.UUID(current_context.org_id),
-        document_repo.model.status.in_(["queued", "processing", "failed"])
-    ).order_by(document_repo.model.created_at.desc()).all()
+    docs = document_service.get_processing_documents(db, current_context)
     return docs
 
 
@@ -235,8 +243,18 @@ def update_document(
     if not db_doc:
         raise HTTPException(status_code=404, detail="Document not found.")
 
-    if str(db_doc.org_id) != current_context.org_id:
-        raise HTTPException(status_code=403, detail="Cross-tenant edit not allowed.")
+    if not check_document_permission(db, str(doc_id), current_context, "write"):
+        raise HTTPException(status_code=403, detail="Access denied: write permission required.")
+
+    # Check lock
+    from datetime import datetime, timezone
+    lock = db.query(DocumentLock).filter(DocumentLock.document_id == doc_id).first()
+    if lock and lock.expires_at.replace(tzinfo=timezone.utc) > datetime.now(timezone.utc):
+        if lock.locked_by != uuid.UUID(current_context.user.id):
+            raise HTTPException(
+                status_code=status.HTTP_423_LOCKED,
+                detail="Document is currently locked by another user."
+            )
 
     obj_in = payload.model_dump(exclude_unset=True)
     updated_doc = document_repo.update(db, db_obj=db_doc, obj_in=obj_in)
@@ -329,8 +347,8 @@ def get_document(
     if not db_doc:
         raise HTTPException(status_code=404, detail="Document not found.")
 
-    if str(db_doc.org_id) != current_context.org_id:
-        raise HTTPException(status_code=403, detail="Cross-tenant access not allowed.")
+    if not check_document_permission(db, str(doc_id), current_context, "read"):
+        raise HTTPException(status_code=403, detail="Access denied: read permission required.")
 
     return db_doc
 
@@ -349,8 +367,18 @@ def delete_document(
     if not db_doc:
         raise HTTPException(status_code=404, detail="Document not found.")
 
-    if str(db_doc.org_id) != current_context.org_id:
-        raise HTTPException(status_code=403, detail="Cross-tenant deletion not allowed.")
+    if not check_document_permission(db, str(doc_id), current_context, "write"):
+        raise HTTPException(status_code=403, detail="Access denied: write permission required.")
+
+    # Check lock
+    from datetime import datetime, timezone
+    lock = db.query(DocumentLock).filter(DocumentLock.document_id == doc_id).first()
+    if lock and lock.expires_at.replace(tzinfo=timezone.utc) > datetime.now(timezone.utc):
+        if lock.locked_by != uuid.UUID(current_context.user.id):
+            raise HTTPException(
+                status_code=status.HTTP_423_LOCKED,
+                detail="Document is currently locked by another user."
+            )
 
     # 1. Delete matching S3 objects
     try:
@@ -520,12 +548,12 @@ def reprocess_document(
         raise HTTPException(status_code=403, detail="Cross-tenant access not allowed.")
 
     if pipeline == "hybrid":
-        chain(
+        parallel_tasks = [
             docling_parse_task.si(str(doc_id)),
             ocr_task.si(str(doc_id)),
-            metadata_enrichment_task.si(str(doc_id)),
-            bge_embed_task.si(str(doc_id))
-        ).apply_async(queue="ocr-pipeline")
+            metadata_enrichment_task.si(str(doc_id))
+        ]
+        chord(group(*parallel_tasks), bge_embed_task.si(str(doc_id))).apply_async()
     else:
         document_repo.update_status(db, doc_id=doc_id, status="queued")
         
@@ -658,3 +686,179 @@ def get_related_documents(
             })
             
     return response
+
+
+# ---------------------------------------------------------------------------
+# Sprint 11: Downloads and Versions
+# ---------------------------------------------------------------------------
+
+class SignedURLResponse(BaseModel):
+    url: str
+    expires_at: datetime
+
+
+@router.get("/{doc_id}/download", response_model=SignedURLResponse)
+def download_document(
+    doc_id: uuid.UUID,
+    current_context: CurrentUserContext = Depends(get_current_user_context),
+    db: Session = Depends(get_db)
+):
+    """
+    GET /api/v1/documents/{doc_id}/download
+    Generates a signed URL for secure download. Applies dynamic watermark if configured.
+    """
+    if not check_document_permission(db, str(doc_id), current_context, "download"):
+        raise HTTPException(status_code=403, detail="Access denied: download permission required.")
+
+    doc = document_repo.get(db, id=doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    s3_key = doc.storage_path
+    wm_config = get_document_watermark_config(db, doc_id, doc.folder_id)
+
+    # If watermarking is needed and it's a PDF
+    if wm_config and doc.file_type.lower() == "pdf":
+        try:
+            # Download original
+            obj = s3_storage.client.get_object(Bucket=s3_storage.bucket_name, Key=s3_key)
+            original_bytes = obj['Body'].read()
+
+            # Apply watermark
+            username = current_context.user.email if wm_config.include_username else None
+            watermarked_bytes = apply_watermark_to_pdf(
+                original_bytes,
+                watermark_text=wm_config.watermark_text,
+                username=username,
+                include_timestamp=wm_config.include_timestamp,
+                opacity=wm_config.opacity
+            )
+
+            # Upload to temp key
+            temp_s3_key = f"temp/{doc_id}/watermarked_{current_context.user.id}.pdf"
+            upload_bytes_with_sse(watermarked_bytes, temp_s3_key, content_type="application/pdf")
+            s3_key = temp_s3_key
+        except Exception as e:
+            logger.error("Failed to apply watermark: %s", e)
+            # Proceed with original file if watermark fails
+
+    expires_sec = 900
+    signed_url = generate_signed_download_url(
+        document_id=str(doc_id),
+        s3_key=s3_key,
+        user_id=str(current_context.user.id),
+        expires_seconds=expires_sec
+    )
+
+    import time
+    return SignedURLResponse(
+        url=signed_url,
+        expires_at=datetime.fromtimestamp(time.time() + expires_sec)
+    )
+
+
+class DocumentVersionResponse(BaseModel):
+    id: uuid.UUID
+    version_number: int
+    file_size: int
+    change_note: Optional[str]
+    created_at: datetime
+    uploader_id: Optional[uuid.UUID]
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("/{doc_id}/versions", response_model=List[DocumentVersionResponse])
+def list_versions(
+    doc_id: uuid.UUID,
+    current_context: CurrentUserContext = Depends(get_current_user_context),
+    db: Session = Depends(get_db)
+):
+    """
+    GET /api/v1/documents/{doc_id}/versions
+    Lists all versions of a document.
+    """
+    if not check_document_permission(db, str(doc_id), current_context, "version"):
+        raise HTTPException(status_code=403, detail="Access denied: version permission required.")
+
+    versions = db.query(DocumentVersion).filter(
+        DocumentVersion.document_id == doc_id
+    ).order_by(DocumentVersion.version_number.desc()).all()
+
+    return versions
+
+
+@router.post("/{doc_id}/versions", response_model=DocumentVersionResponse)
+def upload_new_version(
+    doc_id: uuid.UUID,
+    change_note: str = Form(...),
+    file: UploadFile = File(...),
+    current_context: CurrentUserContext = Depends(get_current_user_context),
+    db: Session = Depends(get_db)
+):
+    """
+    POST /api/v1/documents/{doc_id}/versions
+    Uploads a new version of the document.
+    """
+    if not check_document_permission(db, str(doc_id), current_context, "write"):
+        raise HTTPException(status_code=403, detail="Access denied: write permission required.")
+        
+    doc = document_repo.get(db, id=doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Check lock
+    from datetime import datetime, timezone
+    lock = db.query(DocumentLock).filter(DocumentLock.document_id == doc_id).first()
+    if lock and lock.expires_at.replace(tzinfo=timezone.utc) > datetime.now(timezone.utc):
+        if lock.locked_by != uuid.UUID(current_context.user.id):
+            raise HTTPException(
+                status_code=status.HTTP_423_LOCKED,
+                detail="Document is currently locked by another user."
+            )
+
+    file_bytes = file.file.read()
+    file_size = len(file_bytes)
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+    file.file.seek(0)
+
+    # Get latest version number
+    latest_ver = db.query(DocumentVersion).filter(
+        DocumentVersion.document_id == doc_id
+    ).order_by(DocumentVersion.version_number.desc()).first()
+    
+    next_ver_num = (latest_ver.version_number + 1) if latest_ver else 1
+
+    s3_key = f"{doc.org_id}/{doc.id}/v{next_ver_num}_{file.filename}"
+    
+    # Upload with SSE
+    from backend.app.services.security_service import get_sse_s3_headers
+    s3_storage.client.upload_fileobj(
+        file.file, 
+        s3_storage.bucket_name, 
+        s3_key,
+        ExtraArgs=get_sse_s3_headers()
+    )
+
+    # Create new version record
+    new_version = DocumentVersion(
+        document_id=doc.id,
+        org_id=doc.org_id,
+        version_number=next_ver_num,
+        s3_key=s3_key,
+        file_size=file_size,
+        file_hash=file_hash,
+        uploader_id=uuid.UUID(current_context.user.id),
+        change_note=change_note
+    )
+    db.add(new_version)
+    
+    # Update main doc storage_path to latest
+    doc.storage_path = s3_key
+    doc.file_size = file_size
+    doc.file_hash = file_hash
+    db.commit()
+    db.refresh(new_version)
+
+    return new_version

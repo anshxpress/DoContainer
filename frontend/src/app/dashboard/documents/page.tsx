@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
+import { apiClient } from "../../../lib/apiClient";
 import {
   Folder, FileText, MoreVertical, LayoutGrid, List as ListIcon, 
   FolderPlus, UploadCloud, Search, ChevronRight, Check, X,
@@ -50,27 +51,26 @@ export default function DocumentsPage() {
   // Context Menu
   const [activeMenu, setActiveMenu] = useState<{ type: "folder" | "doc", id: string } | null>(null);
 
-  const fetchAllFolders = async (token: string) => {
-    const res = await fetch("/api/v1/folders", { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) setAllFolders(await res.json());
+  const fetchAllFolders = async () => {
+    try {
+      const folders = await apiClient.get("/api/v1/folders");
+      setAllFolders(folders);
+    } catch {}
   };
 
-  const fetchDocuments = useCallback(async (token: string, folderId: string | null) => {
-    const res = await fetch(`/api/v1/documents?folder_id=${folderId || "root"}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    if (res.ok) setCurrentDocs(await res.json());
+  const fetchDocuments = useCallback(async (folderId: string | null) => {
+    try {
+      const docs = await apiClient.get(`/api/v1/documents?folder_id=${folderId || "root"}`);
+      setCurrentDocs(docs);
+    } catch {}
   }, []);
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const token = typeof window !== "undefined" ? localStorage.getItem("docscope_token") : null;
-    if (!token) return router.push("/login");
-    
-    await fetchAllFolders(token);
-    await fetchDocuments(token, currentFolderId);
+    await fetchAllFolders();
+    await fetchDocuments(currentFolderId);
     setLoading(false);
-  }, [currentFolderId, fetchDocuments, router]);
+  }, [currentFolderId, fetchDocuments]);
 
   useEffect(() => {
     loadData();
@@ -102,36 +102,24 @@ export default function DocumentsPage() {
     e.preventDefault();
     if (!newFolderName.trim()) return;
     
-    const token = localStorage.getItem("docscope_token");
-    const res = await fetch("/api/v1/folders", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ name: newFolderName, parent_id: currentFolderId })
-    });
-    
-    if (res.ok) {
+    try {
+      await apiClient.post("/api/v1/folders", { name: newFolderName, parent_id: currentFolderId });
       setNewFolderName("");
       setIsNewFolderModalOpen(false);
       loadData();
-    }
+    } catch (err) {}
   };
 
   const handleDelete = async (type: "folder" | "doc", id: string) => {
     if (!confirm(`Are you sure you want to delete this ${type}?`)) return;
     
-    const token = localStorage.getItem("docscope_token");
     const endpoint = type === "folder" ? `/api/v1/folders/${id}` : `/api/v1/documents/${id}`;
     
-    const res = await fetch(endpoint, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    
-    if (res.ok) {
+    try {
+      await apiClient.delete(endpoint);
       loadData();
-    } else {
-      const err = await res.json();
-      alert(`Failed to delete: ${err.detail}`);
+    } catch (err: any) {
+      alert(`Failed to delete: ${err.message}`);
     }
     setActiveMenu(null);
   };

@@ -328,12 +328,16 @@ def render_pages_task(self, prev_result: Dict[str, Any], document_id: str) -> Di
                     logger.info(f"PyMuPDF rendering {len(doc_fitz)} pages for document {document_id}")
                     for i, page in enumerate(doc_fitz):
                         page_num = i + 1
-                        pix = page.get_pixmap(dpi=200)
+                        pix = page.get_pixmap(dpi=150)  # Sprint 10: 200->150 DPI, further reduced by WebP
                         page_file_path = os.path.join(temp_dir, f"page_{page_num}.png")
                         pix.save(page_file_path)
-                        
-                        page_s3_key = f"{doc.org_id}/{doc.id}/1/page_{page_num}.png"
-                        s3_storage.upload_file(page_file_path, page_s3_key)
+
+                        # Sprint 10: Convert PNG -> WebP before upload (~75% size reduction)
+                        from backend.app.services.storage_optimizer import png_to_webp
+                        webp_bytes = png_to_webp(page_file_path)
+                        page_s3_key = f"{doc.org_id}/{doc.id}/1/page_{page_num}.webp"
+                        import io as _io
+                        s3_storage.upload_bytes(webp_bytes, page_s3_key, content_type="image/webp")
                         rendered_pages.append((page_num, page_s3_key))
                     doc_fitz.close()
                 except Exception as fitz_err:
@@ -344,9 +348,12 @@ def render_pages_task(self, prev_result: Dict[str, Any], document_id: str) -> Di
                             page_num = i + 1
                             page_file_path = os.path.join(temp_dir, f"page_{page_num}.png")
                             img.save(page_file_path, "PNG")
-                            
-                            page_s3_key = f"{doc.org_id}/{doc.id}/1/page_{page_num}.png"
-                            s3_storage.upload_file(page_file_path, page_s3_key)
+
+                            # Sprint 10: Convert PNG -> WebP before upload
+                            from backend.app.services.storage_optimizer import png_to_webp
+                            webp_bytes = png_to_webp(page_file_path)
+                            page_s3_key = f"{doc.org_id}/{doc.id}/1/page_{page_num}.webp"
+                            s3_storage.upload_bytes(webp_bytes, page_s3_key, content_type="image/webp")
                             rendered_pages.append((page_num, page_s3_key))
                     except Exception as e:
                         logger.warning(f"pdf2image conversion failed: {e}. Falling back to mock page PNG.")
@@ -366,14 +373,20 @@ def render_pages_task(self, prev_result: Dict[str, Any], document_id: str) -> Di
 
         # Register pages in PostgreSQL database
         page_ids = []
+        new_pages = []
         try:
             for page_num, png_path in rendered_pages:
-                db_page = document_page_repo.create(db, obj_in={
-                    "document_id": doc.id,
-                    "page_number": page_num,
-                    "png_storage_path": png_path
-                })
-                page_ids.append((page_num, str(db_page.id), png_path))
+                new_id = uuid.uuid4()
+                new_pages.append(DocumentPage(
+                    id=new_id,
+                    document_id=doc.id,
+                    page_number=page_num,
+                    png_storage_path=png_path
+                ))
+                page_ids.append((page_num, str(new_id), png_path))
+            
+            if new_pages:
+                db.bulk_save_objects(new_pages)
             
             # Update status remains as processing; final status is set by embed_and_index_task
             logger.info(f"Page rendering completed. Registered {len(rendered_pages)} pages.")

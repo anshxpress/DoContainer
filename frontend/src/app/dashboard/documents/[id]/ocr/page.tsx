@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { apiClient } from "../../../../../lib/apiClient";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { OCROverlay, OcrChunk } from "@/components/OCROverlay";

@@ -154,7 +154,7 @@ class DocumentPageRepository(BaseRepository[DocumentPage]):
         """
         Day 4: PostgreSQL Full-Text Search fallback.
         """
-        ts_query = func.plainto_tsquery("english", query_text)
+        ts_query = func.websearch_to_tsquery("english", query_text)
         ts_rank_expr = func.ts_rank(
             func.to_tsvector("english", func.coalesce(DocumentPage.text_content, "")),
             ts_query,
@@ -228,3 +228,25 @@ class UsageMetricRepository(BaseRepository[UsageMetric]):
 audit_log_repo = AuditLogRepository()
 usage_metric_repo = UsageMetricRepository()
 
+from backend.app.models.models import ApprovalRequest, DocumentLock, DocumentACL, RetentionPolicy
+
+class ApprovalRequestRepository(BaseRepository[ApprovalRequest]):
+    def __init__(self):
+        super().__init__(ApprovalRequest)
+
+class DocumentLockRepository(BaseRepository[DocumentLock]):
+    def __init__(self):
+        super().__init__(DocumentLock)
+        
+class DocumentAclRepository(BaseRepository[DocumentACL]):
+    def __init__(self):
+        super().__init__(DocumentACL)
+        
+class RetentionPolicyRepository(BaseRepository[RetentionPolicy]):
+    def __init__(self):
+        super().__init__(RetentionPolicy)
+
+approval_request_repo = ApprovalRequestRepository()
+document_lock_repo = DocumentLockRepository()
+document_acl_repo = DocumentAclRepository()
+retention_policy_repo = RetentionPolicyRepository()

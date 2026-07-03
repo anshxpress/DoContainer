@@ -100,3 +100,83 @@ class PermissionChecker:
                 detail=f"Missing required permission: {self.required_permission}"
             )
         return current_context
+
+
+def get_db() -> Generator:
+    """FastAPI dependency: yields a SQLAlchemy session."""
+    from backend.app.core.db import SessionLocal
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def check_document_permission(
+    db: Session,
+    document_id: str,
+    current_context: "CurrentUserContext",
+    permission: str,
+) -> bool:
+    """
+    Returns True if the user has *permission* for the given document, evaluated as:
+      1. Org Admin / Super Admin -> always True
+      2. Org-level RBAC permission present -> True
+      3. Document-level ACL entry -> True
+      4. Otherwise -> False
+
+    Callers should raise HTTP 403 if False.
+    """
+    import uuid as _uuid
+    from backend.app.models.models import DocumentACL, TeamMembership
+
+    # Admins bypass everything
+    if current_context.role_name in ("Super Admin", "Organization Admin"):
+        return True
+
+    # Org-level permission check
+    if permission in current_context.permissions:
+        return True
+
+    # Document ACL check
+    doc_uuid = _uuid.UUID(str(document_id))
+    user_uuid = current_context.user.id
+
+    # Collect teams the user belongs to
+    team_rows = db.query(TeamMembership.team_id).filter(
+        TeamMembership.user_id == user_uuid
+    ).all()
+    team_ids = [str(r.team_id) for r in team_rows]
+
+    # Get role id
+    membership = db.query(Membership).filter(Membership.user_id == user_uuid).first()
+    role_id = membership.role_id if membership else None
+
+    from backend.app.services.security_service import check_document_acl
+    return check_document_acl(
+        db=db,
+        document_id=doc_uuid,
+        user_id=user_uuid,
+        permission=permission,
+        user_team_ids=team_ids,
+        user_role_id=role_id,
+    )
+
+
+def get_document_or_404(db: Session, document_id: str, org_id: str):
+    import uuid
+    from backend.app.models.models import Document
+    try:
+        doc_uuid = uuid.UUID(str(document_id))
+        org_uuid = uuid.UUID(str(org_id))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID format")
+        
+    doc = db.query(Document).filter(
+        Document.id == doc_uuid,
+        Document.org_id == org_uuid
+    ).first()
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return doc

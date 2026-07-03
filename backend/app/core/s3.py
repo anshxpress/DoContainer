@@ -55,6 +55,18 @@ class S3Storage:
         """Construct the standard folder structure: org_id/document_id/version_number/"""
         return f"{org_id}/{document_id}/{version_number}/"
 
+    def generate_document_key(self, org_id: Any, document_id: Any, filename: str) -> str:
+        return f"{org_id}/{document_id}/{filename}"
+        
+    def generate_ocr_key(self, org_id: Any, document_id: Any) -> str:
+        return f"{org_id}/{document_id}/ocr_results.json.gz"
+        
+    def generate_preview_key(self, org_id: Any, document_id: Any, page_number: int) -> str:
+        return f"{org_id}/{document_id}/previews/page_{page_number}.png"
+        
+    def generate_thumbnail_key(self, org_id: Any, document_id: Any) -> str:
+        return f"{org_id}/{document_id}/thumbnail.png"
+
     def upload_file(self, file_path: str, object_name: str) -> bool:
         """Upload a file to S3 storage."""
         try:
@@ -73,6 +85,45 @@ class S3Storage:
             return True
         except ClientError as e:
             print(f"Failed to upload fileobj to S3: {e}")
+            return False
+
+    def upload_bytes(self, data: bytes, object_name: str, content_type: str = "application/octet-stream") -> bool:
+        """Upload raw bytes to S3 with an explicit content type."""
+        try:
+            self.ensure_bucket_exists()
+            self.client.put_object(
+                Bucket=self.bucket_name,
+                Key=object_name,
+                Body=data,
+                ContentType=content_type,
+            )
+            return True
+        except ClientError as e:
+            print(f"Failed to upload bytes to S3: {e}")
+            return False
+
+    def upload_bytes_compressed(self, data: bytes, object_name: str, content_type: str = "text/plain") -> bool:
+        """
+        GZIP-compress *data* and upload to S3 with ContentEncoding=gzip.
+        Reduces storage for text payloads (OCR text, logs) by ~70%.
+        Compatible with clients that support transparent decompression.
+        """
+        import gzip as _gzip
+        try:
+            self.ensure_bucket_exists()
+            compressed = _gzip.compress(data, compresslevel=6)
+            self.client.put_object(
+                Bucket=self.bucket_name,
+                Key=object_name,
+                Body=compressed,
+                ContentType=content_type,
+                ContentEncoding="gzip",
+            )
+            ratio = (1 - len(compressed) / len(data)) * 100 if data else 0
+            print(f"Compressed upload {object_name}: {len(data)} -> {len(compressed)} bytes ({ratio:.1f}% saved)")
+            return True
+        except ClientError as e:
+            print(f"Failed to upload compressed bytes to S3: {e}")
             return False
 
     def generate_presigned_url(self, object_name: str, expiration: int = 300) -> Optional[str]:

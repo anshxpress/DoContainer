@@ -316,3 +316,48 @@ def get_pipeline_metrics(
     except Exception as exc:
         logger.error(f"Failed to retrieve pipeline metrics: {exc}")
         raise HTTPException(status_code=500, detail="Failed to retrieve pipeline metrics")
+
+# ---------------------------------------------------------------------------
+# Sprint 11: Audit Logs
+# ---------------------------------------------------------------------------
+
+class AuditLogResponse(BaseModel):
+    id: str
+    user_id: Optional[str]
+    ip_address: Optional[str]
+    action: str
+    resource: str
+    metadata: str
+    created_at: datetime
+
+@router.get("/audit", response_model=List[AuditLogResponse])
+def get_audit_logs(
+    limit: int = 50,
+    offset: int = 0,
+    action: Optional[str] = None,
+    current_context: CurrentUserContext = Depends(PermissionChecker("analytics:read")),
+    db: Session = Depends(get_db)
+):
+    """
+    GET /api/v1/admin/audit
+    Retrieves the security audit log for the organization.
+    """
+    from backend.app.models.partitioned_models import AuditLog
+    
+    query = db.query(AuditLog)
+    if action:
+        query = query.filter(AuditLog.action == action)
+        
+    logs = query.order_by(AuditLog.created_at.desc()).offset(offset).limit(limit).all()
+    
+    return [
+        AuditLogResponse(
+            id=str(log.id),
+            user_id=str(log.user_id) if log.user_id else None,
+            ip_address=log.ip_address,
+            action=log.action,
+            resource=log.resource,
+            metadata=log.metadata_json or "{}",
+            created_at=log.created_at
+        ) for log in logs
+    ]

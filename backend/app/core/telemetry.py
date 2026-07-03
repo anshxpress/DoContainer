@@ -5,14 +5,14 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, ConsoleSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.celery import CeleryInstrumentor
+from backend.app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 # Set tracer provider
 provider = TracerProvider()
 
-# Setup exporter: default to a simple ConsoleSpanExporter or no-op if disabled to keep terminal clean
-otel_console_export = os.getenv("OTEL_CONSOLE_EXPORT", "false").lower() == "true"
+otel_console_export = settings.OTEL_CONSOLE_EXPORT
 
 if otel_console_export:
     processor = SimpleSpanProcessor(ConsoleSpanExporter())

@@ -26,6 +26,31 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
                 action = "document.search"
             elif "/api/v1/chat" in path and method == "POST":
                 action = "chat.ask"
+            elif "/api/v1/retention" in path:
+                if method == "POST":
+                    action = "retention.create"
+                elif method == "DELETE":
+                    action = "retention.delete"
+            elif "/lock" in path:
+                if method == "POST":
+                    action = "document.lock.acquire"
+                elif method == "PUT":
+                    action = "document.lock.renew"
+                elif method == "DELETE":
+                    action = "document.lock.release"
+            elif "/acl" in path:
+                if method == "POST":
+                    action = "document.acl.grant"
+                elif method == "DELETE":
+                    action = "document.acl.revoke"
+            elif "/approval" in path:
+                if method == "POST" and "submit" in path:
+                    action = "document.approval.submit"
+                elif method == "POST" and "decide" in path:
+                    action = "document.approval.decide"
+            elif "/versions" in path:
+                if method == "POST":
+                    action = "document.version.upload"
             elif "/api/v1/documents" in path:
                 if method == "POST":
                     action = "document.upload"
@@ -33,7 +58,8 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
                     action = "document.edit"
                 elif method == "DELETE":
                     action = "document.delete"
-            
+                elif method == "GET" and "download" in path:
+                    action = "document.download"
             # If the request matches our audit targets, trigger async log
             if action:
                 user_id_str = None

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { apiClient } from "../lib/apiClient";
 import { usePathname } from "next/navigation";
 import { 
   LayoutDashboard, 
@@ -19,6 +20,7 @@ import {
   X,
   FileSearch2,
   Activity,
+  CheckCircle,
 } from "lucide-react";
 
 export interface NavItem {
@@ -30,13 +32,13 @@ export interface NavItem {
 const navItems: NavItem[] = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "Documents", href: "/dashboard/documents", icon: FileSearch2 },
+  { name: "Approvals", href: "/dashboard/approvals", icon: CheckCircle },
   { name: "Upload", href: "/dashboard/upload", icon: UploadCloud },
   { name: "Processing", href: "/dashboard/processing", icon: Activity },
   { name: "Search", href: "/dashboard/search", icon: Search },
   { name: "Chat", href: "/dashboard/chat", icon: MessageSquare },
   { name: "Admin", href: "/dashboard/admin", icon: ShieldAlert },
   { name: "Analytics", href: "/dashboard", icon: BarChart3 },
-  { name: "Audit Logs", href: "/dashboard", icon: History },
 ];
 
 export default function Sidebar() {
@@ -55,24 +57,9 @@ export default function Sidebar() {
 
   useEffect(() => {
     const fetchProfile = async () => {
-      const token = typeof window !== "undefined" ? localStorage.getItem("docscope_token") : null;
-      if (!token) {
-          setProfileLoading(false);
-          return;
-      }
       try {
-        const resp = await fetch("/api/v1/auth/me", {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (resp.ok) {
-          const profile = await resp.json();
-          setUserProfile(profile);
-        } else if (resp.status === 401) {
-          console.warn("Session expired. Redirecting to login...");
-          localStorage.removeItem("docscope_token");
-          window.location.href = "/login";
-          return;
-        }
+        const profile = await apiClient.get("/api/v1/auth/me");
+        setUserProfile(profile);
       } catch (err) {
         console.warn("Failed to fetch user profile, using placeholders.", err);
       } finally {
