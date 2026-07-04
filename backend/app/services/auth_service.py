@@ -14,7 +14,12 @@ class AuthService:
                 detail="A user with this email already exists."
             )
 
-        org_data = {"name": user_in.org_name}
+        org_name_to_use = user_in.org_name
+        if not org_name_to_use:
+            first = user_in.first_name or "Personal"
+            org_name_to_use = f"{first}'s Workspace"
+            
+        org_data = {"name": org_name_to_use}
         db_org = org_repo.create(db, obj_in=org_data)
 
         default_roles = ["Organization Admin", "Manager", "Analyst", "Viewer", "Guest", "Approver"]

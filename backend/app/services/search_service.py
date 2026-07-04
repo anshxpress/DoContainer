@@ -23,6 +23,7 @@ from backend.app.core.telemetry import tracer
 from backend.app.core.cache import get_cache, set_cache, generate_cache_key
 from backend.app.models.models import Document, DocumentSummary, DocumentPage
 from backend.app.services.llm_client import get_llm_client
+from backend.app.core.config import features
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +128,7 @@ def hybrid_search(
             
         if metadata_filters.title:
             q = q.filter(Document.name.ilike(f"%{metadata_filters.title}%"))
-        if metadata_filters.department:
+        if metadata_filters.department and features.ENABLE_ORGANIZATION:
             q = q.filter(Document.department.ilike(f"%{metadata_filters.department}%"))
         if metadata_filters.document_type:
             q = q.filter(DocumentSummary.document_type.ilike(f"%{metadata_filters.document_type}%"))

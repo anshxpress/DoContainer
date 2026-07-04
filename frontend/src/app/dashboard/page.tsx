@@ -31,6 +31,8 @@ import {
   Legend,
   CartesianGrid
 } from "recharts";
+import PersonalDashboard from "./personal/page";
+import { CURRENT_APP_MODE, AppMode } from "../../config/appMode";
 
 // Colors matching the dark emerald theme
 const COLORS = ["#10b981", "#06b6d4", "#6366f1", "#f59e0b"];
@@ -121,6 +123,10 @@ const MOCK_ANALYTICS = {
 };
 
 export default function Dashboard() {
+  if (CURRENT_APP_MODE === AppMode.PERSONAL) {
+    return <PersonalDashboard />;
+  }
+
   const [mounted, setMounted] = useState(false);
   const [data, setData] = useState<typeof MOCK_ANALYTICS | null>(null);
   const [loading, setLoading] = useState(true);

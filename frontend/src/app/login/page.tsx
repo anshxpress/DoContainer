@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ShieldAlert, Mail, Lock, User, Building, Loader2, FileSearch2 } from "lucide-react";
+import { CURRENT_APP_MODE, AppMode } from "../../config/appMode";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -133,20 +134,22 @@ export default function LoginPage() {
               </div>
 
               {/* Organization name */}
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Organization Name</label>
-                <div className="relative">
-                  <Building size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500" />
-                  <input
-                    type="text"
-                    required
-                    placeholder="Acme Corp"
-                    value={orgName}
-                    onChange={(e) => setOrgName(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-zinc-900/60 border border-white/5 rounded-xl text-zinc-200 text-sm focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/30 outline-none transition-all"
-                  />
+              {CURRENT_APP_MODE !== AppMode.PERSONAL && (
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Organization Name</label>
+                  <div className="relative">
+                    <Building size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+                    <input
+                      type="text"
+                      required
+                      placeholder="Acme Corp"
+                      value={orgName}
+                      onChange={(e) => setOrgName(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2.5 bg-zinc-900/60 border border-white/5 rounded-xl text-zinc-200 text-sm focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/30 outline-none transition-all"
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
             </>
           )}
 

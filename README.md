@@ -1,60 +1,67 @@
-# DoContainer — Enterprise Multimodal Document Intelligence
+# DOCSCOPE Personal AI Workspace
 
-> **AI-powered document search platform** — upload PDFs, Office files, and images; get back semantically matched pages with visual citations, powered by multi-vector embeddings and hybrid retrieval.
+> A lightweight AI-powered personal document management system that helps users securely store, organize, search, summarize, and chat with their documents using semantic search, OCR, and Retrieval-Augmented Generation.
 
-## Project Overview
+---
 
-**DoContainer** is an enterprise-grade document intelligence platform that transforms traditional document storage into an intelligent, secure, and searchable organizational knowledge base. Instead of relying on filenames, folders, or exact keyword searches, DoContainer understands the semantic meaning, structure, and visual content of documents, allowing employees to find information using natural language while respecting enterprise security policies.
+## What is DOCSCOPE Personal?
 
-The platform is designed for organizations that manage thousands or millions of documents across multiple departments such as Finance, Human Resources, Legal, Engineering, Operations, Research, and Sales. Every uploaded document is automatically processed, indexed, and enriched using AI so that employees can retrieve the right information in seconds without manually browsing complex folder structures.
+**DOCSCOPE Personal** is an AI-powered personal document workspace where a single user can:
 
-### Problem Statement
+- 📤 **Upload** documents (PDF, DOCX, images, and more)
+- 📁 **Organize** documents into folders with tags and favorites
+- 🔍 **Search** documents using hybrid semantic + keyword search
+- 💬 **Chat** with their documents using Retrieval-Augmented Generation
+- 📝 **Generate AI summaries** and executive overviews
+- 🔁 **Detect duplicates** automatically
+- 🖺 **OCR** scanned PDFs adaptively (never run on digital PDFs)
 
-Large organizations face significant challenges managing enterprise documents:
+Think of it as an **AI-powered personal Google Drive** — where you can ask questions about your documents instead of browsing folders.
 
-- Millions of files distributed across departments.
-- Deep folder hierarchies that are difficult to navigate.
-- Duplicate documents and inconsistent file naming.
-- Scanned PDFs that cannot be searched effectively.
-- Knowledge locked inside reports, contracts, presentations, and manuals.
-- Employees spending valuable time searching instead of working.
-- Sensitive documents requiring strict access control.
+---
 
-Traditional document management systems rely on filenames and metadata, making it difficult to discover information when users do not know where a document is stored.
+## Editions
 
-DoContainer solves this by converting every document into an intelligent knowledge asset.
+DOCSCOPE ships from a single codebase with three editions controlled by the `APP_MODE` environment variable.
 
-### Solution
+| Edition | `APP_MODE` | Status | Description |
+|---------|-----------|--------|-------------|
+| **Personal** | `personal` | ✅ Default | Lightweight single-user AI workspace |
+| **Team** | `team` | 🔲 Future | Shared workspace + collaboration |
+| **Enterprise** | `enterprise` | 🔲 Preserved | Full RBAC, ACL, Approvals, Audit, Monitoring |
 
-DoContainer combines document parsing, OCR, multimodal AI, semantic retrieval, and enterprise-grade security into a single platform.
+### DOCSCOPE Personal includes:
+- Document Upload & Folder Management
+- Adaptive OCR (scanned PDFs only)
+- Docling Parsing + Semantic Chunking
+- BGE-M3 Embeddings + Qdrant Vector Search
+- Hybrid Search (semantic + keyword + RRF)
+- AI Chat (RAG via Gemini)
+- Executive Summaries
+- Duplicate Detection
+- Favorites & Recent Documents
 
-Every uploaded document is automatically:
+### Enterprise Edition is preserved in the codebase
 
-- Validated and secured
-- Parsed into structured content
-- OCR processed when required
-- Converted into semantic and visual embeddings
-- Indexed for fast retrieval
-- Enriched with AI-generated metadata
-- Protected by Role-Based Access Control (RBAC)
+All enterprise modules (Organizations, Teams, RBAC, ACL, Approvals, Audit, Monitoring, Knowledge Graph, Analytics, Notifications, Workflow Engine) remain fully implemented in the codebase. They are **disabled — not deleted** — via feature flags and clearly labeled comments:
 
-Users can search using natural language instead of remembering filenames or folder locations.
+```python
+# Enterprise Feature Disabled — Approval Workflow
+# Restore by setting ENABLE_APPROVAL=True (Enterprise mode).
+```
 
-**Example queries:**
+To re-enable the full Enterprise Edition, set:
 
-- *"Show the latest product specification for Project Phoenix."*
-- *"Find all invoices from ABC Corporation."*
-- *"Where is the employee leave policy?"*
-- *"Show the contract signed with XYZ Company."*
-- *"Find documents discussing transformer efficiency."*
-
-DoContainer retrieves only the most relevant documents that the user is authorized to access and generates grounded AI answers with citations.
+```env
+APP_MODE=enterprise
+```
 
 ---
 
 ## Table of Contents
 
-- [Project Overview](#project-overview)
+- [What is DOCSCOPE Personal?](#what-is-docscope-personal)
+- [Editions](#editions)
 - [Tech Stack](#tech-stack)
 - [Repository Structure](#repository-structure)
 - [Prerequisites](#prerequisites)
@@ -155,11 +162,18 @@ Install these before starting:
 
 ### 1. Start Infrastructure (Docker)
 
-Start all infrastructure services (PostgreSQL, Redis, Qdrant, MinIO, ClamAV):
+Start all infrastructure services based on your preferred edition:
 
+**Personal Edition (Default)**
 ```powershell
 # From workspace root: d:\docscope
-docker compose -f k8s\docker-compose.yml up -d
+docker compose -f docker-compose.personal.yml up -d
+```
+
+**Enterprise Edition**
+```powershell
+# From workspace root: d:\docscope
+docker compose -f docker-compose.enterprise.yml up -d
 ```
 
 Verify all containers are running:
@@ -326,7 +340,7 @@ $env:PYTHONPATH = "d:\docscope"
 
 | Method | Endpoint | Body | Description |
 |--------|----------|------|-------------|
-| `POST` | `/api/v1/auth/register` | `{email, password, first_name, last_name, org_name}` | Register new user + org. Returns JWT. |
+| `POST` | `/api/v1/auth/register` | `{email, password, first_name, last_name}` | Register new user. Personal workspace is auto-created. Returns JWT. |
 | `POST` | `/api/v1/auth/login` | `{email, password}` | Login. Returns JWT + sets HttpOnly refresh cookie. |
 
 ### Search
@@ -338,10 +352,10 @@ $env:PYTHONPATH = "d:\docscope"
 ### Example: Register + Search
 
 ```powershell
-# 1. Register
+# 1. Register (no org_name needed in Personal Edition — auto-created)
 $reg = Invoke-RestMethod -Uri "http://localhost:8001/api/v1/auth/register" `
   -Method POST -ContentType "application/json" `
-  -Body '{"email":"you@example.com","password":"Pass1234!","org_name":"My Org"}'
+  -Body '{"email":"you@example.com","password":"Pass1234!","first_name":"Jane","last_name":"Doe"}'
 
 # 2. Search
 Invoke-RestMethod -Uri "http://localhost:8001/api/v1/search" `
@@ -419,11 +433,14 @@ d:\docscope\backend\.venv\Scripts\pytest backend\tests\ -v --tb=short
 ## Stopping Everything
 
 ```powershell
-# Stop Docker services (data is preserved in volumes)
-docker compose -f k8s\docker-compose.yml stop
+# Personal Edition — stop and preserve data
+docker compose -f docker-compose.personal.yml stop
 
-# Stop Docker services AND delete all data volumes
-docker compose -f k8s\docker-compose.yml down -v
+# Personal Edition — stop and delete all volumes
+docker compose -f docker-compose.personal.yml down -v
+
+# Enterprise Edition — stop and preserve data
+docker compose -f docker-compose.enterprise.yml stop
 
 # Backend and Frontend — just close the terminal windows (Ctrl+C)
 ```

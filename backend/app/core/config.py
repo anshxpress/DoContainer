@@ -1,10 +1,12 @@
 from pydantic_settings import BaseSettings
 from pydantic import Field
 import os
-
+from backend.app.core.app_mode import AppMode
+from backend.app.core.features import get_feature_flags
 class Settings(BaseSettings):
     PROJECT_NAME: str = "DOCSCOPE AI"
     API_V1_STR: str = "/api/v1"
+    APP_MODE: str = Field(default="personal", env="APP_MODE")
     
     # Database Settings
     DATABASE_URL: str = Field(
@@ -104,3 +106,9 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+try:
+    current_mode = AppMode(settings.APP_MODE)
+except ValueError:
+    current_mode = AppMode.PERSONAL
+
+features = get_feature_flags(current_mode)

@@ -10,7 +10,7 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=8)
-    org_name: str = Field(..., min_length=1)
+    org_name: Optional[str] = None
 
 class UserLogin(BaseModel):
     email: EmailStr

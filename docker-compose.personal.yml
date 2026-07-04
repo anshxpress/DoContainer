@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: docscope
+    ports:
+      - "5435:5432"
+    volumes:
+      - docscope_db_personal:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - docscope_qdrant_personal:/qdrant/storage
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - docscope_minio_personal:/data
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      - APP_MODE=personal
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/docscope
+      - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
+      - S3_ENDPOINT_URL=http://minio:9000
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+      - qdrant
+      - minio
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      - NEXT_PUBLIC_APP_MODE=personal
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    ports:
+      - "3000:3000"
+
+volumes:
+  docscope_db_personal:
+  docscope_qdrant_personal:
+  docscope_minio_personal:

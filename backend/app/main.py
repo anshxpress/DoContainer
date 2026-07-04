@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.app.core.config import settings
+from backend.app.core.config import settings, features
 from backend.app.api.v1 import auth
 from backend.app.api.v1 import search as search_router_module
 from backend.app.api.v1 import chat as chat_router_module
@@ -43,8 +43,10 @@ app = FastAPI(
 from backend.app.core.telemetry import instrument_app
 instrument_app(app)
 
-from prometheus_fastapi_instrumentator import Instrumentator
-Instrumentator().instrument(app).expose(app)
+# Enterprise Feature Disabled — Prometheus metrics endpoint
+# Restore by uncommenting the two lines below when running in Enterprise mode.
+# from prometheus_fastapi_instrumentator import Instrumentator
+# Instrumentator().instrument(app).expose(app)
 
 
 
@@ -59,7 +61,9 @@ app.add_middleware(
 )
 
 from backend.app.core.middleware import AuditLogMiddleware
-app.add_middleware(AuditLogMiddleware)
+# Enterprise Feature Disabled — AuditLogMiddleware (writes to audit_logs table).
+# Restore by uncommenting the line below when running in Enterprise mode.
+# app.add_middleware(AuditLogMiddleware)
 
 
 # Mount routes
@@ -76,29 +80,65 @@ from backend.app.api.v1 import acl as acl_router_module
 from backend.app.api.v1 import retention as retention_router_module
 
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["authentication"])
-app.include_router(search_router_module.router, prefix=f"{settings.API_V1_STR}/search", tags=["search"])
-app.include_router(chat_router_module.router, prefix=f"{settings.API_V1_STR}/chat", tags=["chat"])
+
+# ─── Personal Edition Core Routes ──────────────────────────────────────────────
+if features.ENABLE_SEARCH:
+    app.include_router(search_router_module.router, prefix=f"{settings.API_V1_STR}/search", tags=["search"])
+
+if features.ENABLE_AI_CHAT:
+    app.include_router(chat_router_module.router, prefix=f"{settings.API_V1_STR}/chat", tags=["chat"])
+
 app.include_router(documents_router_module.router, prefix=f"{settings.API_V1_STR}/documents", tags=["documents"])
-app.include_router(folders_router_module.router, prefix=f"{settings.API_V1_STR}/folders", tags=["folders"])
-app.include_router(analytics_router_module.router, prefix=f"{settings.API_V1_STR}/analytics", tags=["analytics"])
-app.include_router(admin_router_module.router, prefix=f"{settings.API_V1_STR}/admin", tags=["admin"])
+
+if features.ENABLE_FOLDERS:
+    app.include_router(folders_router_module.router, prefix=f"{settings.API_V1_STR}/folders", tags=["folders"])
+
 app.include_router(storage_router_module.router, prefix=f"{settings.API_V1_STR}/admin", tags=["storage"])
 
-# Sprint 11 routes
-app.include_router(approvals_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["approvals"])
-app.include_router(locks_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["locks"])
-app.include_router(acl_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["acl"])
-app.include_router(retention_router_module.router, prefix=f"{settings.API_V1_STR}/admin", tags=["retention"])
+# ─── Enterprise Feature Disabled — Analytics & Admin Dashboard ─────────────────
+# Restore by setting ENABLE_ANALYTICS=True (Enterprise mode) or uncommenting:
+# app.include_router(analytics_router_module.router, prefix=f"{settings.API_V1_STR}/analytics", tags=["analytics"])
+# app.include_router(admin_router_module.router, prefix=f"{settings.API_V1_STR}/admin", tags=["admin"])
+if features.ENABLE_ANALYTICS:
+    app.include_router(analytics_router_module.router, prefix=f"{settings.API_V1_STR}/analytics", tags=["analytics"])
+    app.include_router(admin_router_module.router, prefix=f"{settings.API_V1_STR}/admin", tags=["admin"])
+
+# ─── Enterprise Feature Disabled — Approval Workflow ───────────────────────────
+# Restore by setting ENABLE_APPROVAL=True (Enterprise mode).
+if features.ENABLE_APPROVAL:
+    app.include_router(approvals_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["approvals"])
+
+# ─── Enterprise Feature Disabled — Document Locking ────────────────────────────
+# Restore by setting ENABLE_VERSIONING=True (Team/Enterprise mode).
+if features.ENABLE_VERSIONING:
+    app.include_router(locks_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["locks"])
+
+# ─── Enterprise Feature Disabled — ACL & Retention Policies ────────────────────
+# Restore by setting ENABLE_ACL=True (Enterprise mode).
+if features.ENABLE_ACL:
+    app.include_router(acl_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["acl"])
+    app.include_router(retention_router_module.router, prefix=f"{settings.API_V1_STR}/admin", tags=["retention"])
 
 # Sprint 13 routes
 from backend.app.api.v1 import comments as comments_router_module
 from backend.app.api.v1 import tasks as tasks_router_module
 from backend.app.api.v1 import notifications as notifications_router_module
 
-app.include_router(comments_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["comments"])
-app.include_router(tasks_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["tasks"])
-app.include_router(tasks_router_module.docs_router, prefix=f"{settings.API_V1_STR}", tags=["tasks"])
-app.include_router(notifications_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["notifications"])
+# ─── Enterprise Feature Disabled — Comments (Team Collaboration) ────────────────
+# Restore by setting ENABLE_TEAM=True (Team/Enterprise mode).
+if features.ENABLE_TEAM:
+    app.include_router(comments_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["comments"])
+
+# ─── Enterprise Feature Disabled — Tasks ────────────────────────────────────────
+# Restore by setting ENABLE_TASKS=True (Team/Enterprise mode).
+if features.ENABLE_TASKS:
+    app.include_router(tasks_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["tasks"])
+    app.include_router(tasks_router_module.docs_router, prefix=f"{settings.API_V1_STR}", tags=["tasks"])
+
+# ─── Enterprise Feature Disabled — Notifications ────────────────────────────────
+# Restore by setting ENABLE_NOTIFICATIONS=True (Team/Enterprise mode).
+if features.ENABLE_NOTIFICATIONS:
+    app.include_router(notifications_router_module.router, prefix=f"{settings.API_V1_STR}", tags=["notifications"])
 
 
 
@@ -116,7 +156,7 @@ def test_tenant_isolation(org_id: str, current_context: CurrentUserContext = Dep
 
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to DOCSCOPE AI - Enterprise Multimodal Document Intelligence API"}
+    return {"message": "Welcome to DOCSCOPE Personal AI Workspace — Lightweight Document Intelligence API"}
 
 @app.get("/health", tags=["system"])
 def health_check():

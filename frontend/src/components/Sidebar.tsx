@@ -9,9 +9,6 @@ import {
   UploadCloud, 
   Search, 
   MessageSquare, 
-  ShieldAlert, 
-  BarChart3, 
-  History, 
   Settings, 
   LogOut, 
   User, 
@@ -19,8 +16,17 @@ import {
   Menu,
   X,
   FileSearch2,
-  Activity,
-  CheckCircle,
+  Star,
+  Clock,
+  // ─── Enterprise Feature Icons (Disabled in Personal Edition) ───────────────
+  // ShieldAlert,   // Admin
+  // BarChart3,     // Analytics
+  // Activity,      // Processing / Monitoring
+  // CheckCircle,   // Approvals
+  // Bell,          // Notifications
+  // Users,         // Teams
+  // Building2,     // Organizations
+  // ─────────────────────────────────────────────────────────────────────────
 } from "lucide-react";
 
 export interface NavItem {
@@ -29,23 +35,37 @@ export interface NavItem {
   icon: React.ComponentType<any>;
 }
 
+// ─── Personal Edition Navigation ──────────────────────────────────────────────
+// Only core personal features are listed here.
+// Enterprise items are preserved below in comments and can be restored by
+// uncommenting them and adding them back to navItems[].
 const navItems: NavItem[] = [
-  { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { name: "Documents", href: "/dashboard/documents", icon: FileSearch2 },
-  { name: "Approvals", href: "/dashboard/approvals", icon: CheckCircle },
-  { name: "Upload", href: "/dashboard/upload", icon: UploadCloud },
-  { name: "Processing", href: "/dashboard/processing", icon: Activity },
-  { name: "Search", href: "/dashboard/search", icon: Search },
-  { name: "Chat", href: "/dashboard/chat", icon: MessageSquare },
-  { name: "Admin", href: "/dashboard/admin", icon: ShieldAlert },
-  { name: "Analytics", href: "/dashboard", icon: BarChart3 },
+  { name: "Dashboard",  href: "/dashboard",           icon: LayoutDashboard },
+  { name: "Documents",  href: "/dashboard/documents", icon: FileSearch2 },
+  { name: "Upload",     href: "/dashboard/upload",    icon: UploadCloud },
+  { name: "Search",     href: "/dashboard/search",    icon: Search },
+  { name: "AI Chat",    href: "/dashboard/chat",      icon: MessageSquare },
+  { name: "Favorites",  href: "/dashboard/favorites", icon: Star },
+  { name: "Recent",     href: "/dashboard/recent",    icon: Clock },
+  { name: "Settings",   href: "/dashboard/settings",  icon: Settings },
 ];
+
+// ─── Enterprise Feature Navigation (Disabled in Personal Edition) ─────────────
+// Restore these by adding them back into navItems[] above.
+//
+// { name: "Approvals",    href: "/dashboard/approvals",  icon: CheckCircle },
+// { name: "Processing",   href: "/dashboard/processing", icon: Activity },
+// { name: "Admin",        href: "/dashboard/admin",      icon: ShieldAlert },
+// { name: "Analytics",    href: "/dashboard",            icon: BarChart3 },
+// { name: "Teams",        href: "/dashboard/teams",      icon: Users },
+// { name: "Organizations",href: "/dashboard/org",        icon: Building2 },
+// { name: "Notifications",href: "/dashboard/notifications", icon: Bell },
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function Sidebar() {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(true);
   const [profileOpen, setProfileOpen] = useState(false);
-  const [isDarkMode, setIsDarkMode] = useState(true); // Default dark mode optimized
   const [userProfile, setUserProfile] = useState<{
     first_name: string | null;
     last_name: string | null;
@@ -69,17 +89,8 @@ export default function Sidebar() {
     fetchProfile();
   }, []);
 
-
   const toggleSidebar = () => setIsOpen(!isOpen);
   const toggleProfile = () => setProfileOpen(!profileOpen);
-  
-  const toggleTheme = () => {
-    setIsDarkMode(!isDarkMode);
-    // In a real app we'd toggle dark class on document element
-    if (typeof document !== "undefined") {
-      document.documentElement.classList.toggle("light-mode");
-    }
-  };
 
   return (
     <>
@@ -105,9 +116,14 @@ export default function Sidebar() {
               <FileSearch2 size={24} className="text-emerald-400 text-glow" />
             </div>
             {isOpen && (
-              <span className="font-bold text-lg tracking-wider text-glow bg-gradient-to-r from-emerald-400 to-emerald-200 bg-clip-text text-transparent">
-                DoContainer AI
-              </span>
+              <div className="min-w-0">
+                <span className="block font-bold text-base tracking-wide text-glow bg-gradient-to-r from-emerald-400 to-emerald-200 bg-clip-text text-transparent">
+                  DOCSCOPE
+                </span>
+                <span className="block text-[10px] text-zinc-500 font-medium tracking-widest uppercase">
+                  Personal
+                </span>
+              </div>
             )}
           </Link>
           
@@ -122,7 +138,7 @@ export default function Sidebar() {
         {/* Navigation Items */}
         <nav className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto">
           {navItems.map((item) => {
-            const isActive = pathname === item.href;
+            const isActive = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href));
             const Icon = item.icon;
             return (
               <Link
@@ -149,25 +165,8 @@ export default function Sidebar() {
           })}
         </nav>
 
-        {/* Footer Settings & User Profile */}
+        {/* Footer: User Profile */}
         <div className="p-4 border-t border-white/5 space-y-3">
-          {/* Theme Toggle & Collapse Support */}
-          <div className="flex items-center justify-between px-2">
-            {isOpen && <span className="text-xs text-zinc-500">Aesthetic theme</span>}
-            <button 
-              onClick={toggleTheme}
-              className="p-2 rounded-lg text-zinc-400 hover:text-emerald-400 hover:bg-white/5 transition-colors"
-              title="Toggle aesthetic theme"
-            >
-              {isDarkMode ? (
-                <span className="text-sm flex items-center gap-2">🌙 {isOpen && "Dark Optimized"}</span>
-              ) : (
-                <span className="text-sm flex items-center gap-2">☀️ {isOpen && "Light Accent"}</span>
-              )}
-            </button>
-          </div>
-
-          {/* User Profile Popover Trigger */}
           <div className="relative">
             <button 
               onClick={toggleProfile}
@@ -175,18 +174,20 @@ export default function Sidebar() {
             >
               <div className="flex items-center gap-3 min-w-0">
                 <div className="w-9 h-9 rounded-xl bg-emerald-500/20 flex items-center justify-center text-emerald-400 font-bold border border-emerald-500/30 shrink-0">
-                  {profileLoading ? "..." : (userProfile 
+                  {profileLoading ? "…" : (userProfile 
                     ? `${userProfile.first_name?.[0] ?? ""}${userProfile.last_name?.[0] ?? ""}`.trim() || userProfile.email[0].toUpperCase() 
-                    : "JD")}
+                    : "U")}
                 </div>
                 {isOpen && (
                   <div className="min-w-0">
                     <p className="text-xs font-semibold text-zinc-200 truncate">
-                      {profileLoading ? "Loading..." : (userProfile 
+                      {profileLoading ? "Loading…" : (userProfile 
                         ? `${userProfile.first_name ?? ""} ${userProfile.last_name ?? ""}`.trim() || userProfile.email.split("@")[0] 
-                        : "John Doe")}
+                        : "User")}
                     </p>
-                    <p className="text-[10px] text-zinc-500 truncate">{profileLoading ? "..." : (userProfile ? userProfile.role : "Org Admin")}</p>
+                    <p className="text-[10px] text-zinc-500 truncate">
+                      {profileLoading ? "…" : (userProfile ? userProfile.organization_name : "Personal Workspace")}
+                    </p>
                   </div>
                 )}
               </div>
@@ -197,8 +198,12 @@ export default function Sidebar() {
             {profileOpen && (
               <div className="absolute bottom-14 left-0 right-0 mx-2 bg-zinc-900 border border-white/10 rounded-2xl p-2.5 shadow-2xl z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
                 <div className="px-2.5 py-1.5 border-b border-white/5 mb-1.5">
-                  <p className="text-xs font-bold text-zinc-300">{profileLoading ? "Loading..." : (userProfile ? userProfile.organization_name : "DoContainer Inc")}</p>
-                  <p className="text-[10px] text-zinc-500 truncate">{profileLoading ? "..." : (userProfile ? userProfile.email : "john.doe@docontainer.io")}</p>
+                  <p className="text-xs font-bold text-zinc-300">
+                    {profileLoading ? "Loading…" : (userProfile ? userProfile.organization_name : "Personal Workspace")}
+                  </p>
+                  <p className="text-[10px] text-zinc-500 truncate">
+                    {profileLoading ? "…" : (userProfile ? userProfile.email : "")}
+                  </p>
                 </div>
                 <button className="w-full flex items-center gap-2.5 px-2.5 py-2 text-xs text-zinc-400 hover:text-emerald-400 hover:bg-white/5 rounded-lg transition-colors">
                   <User size={14} />
@@ -206,7 +211,7 @@ export default function Sidebar() {
                 </button>
                 <button className="w-full flex items-center gap-2.5 px-2.5 py-2 text-xs text-zinc-400 hover:text-emerald-400 hover:bg-white/5 rounded-lg transition-colors">
                   <Settings size={14} />
-                  <span>Workspace Settings</span>
+                  <span>Settings</span>
                 </button>
                 <div className="h-px bg-white/5 my-1.5" />
                 <button 
