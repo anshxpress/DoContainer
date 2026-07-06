@@ -97,7 +97,7 @@ export default function Sidebar() {
       {/* Mobile Toggle Button */}
       <button 
         onClick={toggleSidebar}
-        className="fixed top-4 left-4 z-50 md:hidden p-2 rounded-lg glass-panel text-zinc-400 hover:text-emerald-400"
+        className="fixed top-4 left-4 z-50 md:hidden p-2 rounded-lg glass-panel text-zinc-400 hover:text-[#82C8E5]"
       >
         {isOpen ? <X size={20} /> : <Menu size={20} />}
       </button>
@@ -112,13 +112,13 @@ export default function Sidebar() {
         {/* Brand Header */}
         <div className="h-16 flex items-center px-6 border-b border-white/5 justify-between">
           <Link href="/dashboard" className="flex items-center gap-3 group">
-            <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 group-hover:bg-emerald-500/20 transition-colors">
-              <FileSearch2 size={24} className="text-emerald-400 text-glow" />
+            <div className="p-2 rounded-lg bg-[#0047AB]/10 text-[#82C8E5] group-hover:bg-[#0047AB]/20 transition-colors">
+              <FileSearch2 size={24} className="text-[#82C8E5] text-glow" />
             </div>
             {isOpen && (
               <div className="min-w-0">
-                <span className="block font-bold text-base tracking-wide text-glow bg-gradient-to-r from-emerald-400 to-emerald-200 bg-clip-text text-transparent">
-                  DOCSCOPE
+                <span className="block font-bold text-base tracking-wide text-glow bg-gradient-to-r from-[#82C8E5] to-[#dff0fc] bg-clip-text text-transparent">
+                  DoContainer
                 </span>
                 <span className="block text-[10px] text-zinc-500 font-medium tracking-widest uppercase">
                   Personal
@@ -129,7 +129,7 @@ export default function Sidebar() {
           
           <button 
             onClick={toggleSidebar}
-            className="hidden md:block p-1 rounded-md text-zinc-400 hover:text-emerald-400 hover:bg-white/5 transition-colors"
+            className="hidden md:block p-1 rounded-md text-zinc-400 hover:text-[#82C8E5] hover:bg-white/5 transition-colors"
           >
             <ChevronRight size={16} className={`transition-transform duration-300 ${isOpen ? "rotate-180" : ""}`} />
           </button>
@@ -146,12 +146,12 @@ export default function Sidebar() {
                 href={item.href}
                 className={`flex items-center gap-4 px-4 py-3 rounded-xl transition-all duration-200 group relative
                   ${isActive 
-                    ? "bg-emerald-500/10 text-emerald-400 border-l-2 border-emerald-500 font-semibold" 
-                    : "text-zinc-400 hover:text-emerald-400 hover:bg-white/5"
+                    ? "bg-[#0047AB]/10 text-[#82C8E5] border-l-2 border-[#0047AB] font-semibold" 
+                    : "text-zinc-400 hover:text-[#82C8E5] hover:bg-white/5"
                   }
                 `}
               >
-                <Icon size={20} className={`${isActive ? "text-emerald-400" : "text-zinc-400 group-hover:text-emerald-400"} transition-colors`} />
+                <Icon size={20} className={`${isActive ? "text-[#82C8E5]" : "text-zinc-400 group-hover:text-[#82C8E5]"} transition-colors`} />
                 {isOpen && <span className="text-sm">{item.name}</span>}
                 
                 {/* Tooltip for collapsed sidebar */}
@@ -173,7 +173,7 @@ export default function Sidebar() {
               className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/5 transition-colors justify-between text-left"
             >
               <div className="flex items-center gap-3 min-w-0">
-                <div className="w-9 h-9 rounded-xl bg-emerald-500/20 flex items-center justify-center text-emerald-400 font-bold border border-emerald-500/30 shrink-0">
+                <div className="w-9 h-9 rounded-xl bg-[#0047AB]/20 flex items-center justify-center text-[#82C8E5] font-bold border border-[#82C8E5]/20 shrink-0">
                   {profileLoading ? "…" : (userProfile 
                     ? `${userProfile.first_name?.[0] ?? ""}${userProfile.last_name?.[0] ?? ""}`.trim() || userProfile.email[0].toUpperCase() 
                     : "U")}
@@ -205,18 +205,18 @@ export default function Sidebar() {
                     {profileLoading ? "…" : (userProfile ? userProfile.email : "")}
                   </p>
                 </div>
-                <button className="w-full flex items-center gap-2.5 px-2.5 py-2 text-xs text-zinc-400 hover:text-emerald-400 hover:bg-white/5 rounded-lg transition-colors">
+                <button className="w-full flex items-center gap-2.5 px-2.5 py-2 text-xs text-zinc-400 hover:text-[#82C8E5] hover:bg-white/5 rounded-lg transition-colors">
                   <User size={14} />
                   <span>My Profile</span>
                 </button>
-                <button className="w-full flex items-center gap-2.5 px-2.5 py-2 text-xs text-zinc-400 hover:text-emerald-400 hover:bg-white/5 rounded-lg transition-colors">
+                <button className="w-full flex items-center gap-2.5 px-2.5 py-2 text-xs text-zinc-400 hover:text-[#82C8E5] hover:bg-white/5 rounded-lg transition-colors">
                   <Settings size={14} />
                   <span>Settings</span>
                 </button>
                 <div className="h-px bg-white/5 my-1.5" />
                 <button 
                   onClick={() => {
-                    localStorage.removeItem("docscope_token");
+                    localStorage.removeItem("DoContainer_token");
                     window.location.href = "/login";
                   }}
                   className="w-full flex items-center gap-2.5 px-2.5 py-2 text-xs text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"

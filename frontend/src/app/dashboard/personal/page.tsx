@@ -81,7 +81,7 @@ export default function PersonalDashboard() {
           </Link>
           <Link 
             href="/dashboard/upload" 
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-lg shadow-emerald-600/15 transition-all duration-200"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#0047AB] hover:bg-[#1a5fc4] text-white text-xs font-semibold shadow-lg shadow-[#0047AB]/25 transition-all duration-200"
           >
             <Plus size={16} />
             <span>Quick Upload</span>
@@ -94,14 +94,14 @@ export default function PersonalDashboard() {
         <div className="glass-card p-6 rounded-2xl relative overflow-hidden group">
           <div className="flex justify-between mb-4">
             <span className="text-sm text-zinc-400 font-medium">My Documents</span>
-            <FileText size={20} className="text-emerald-400" />
+            <FileText size={20} className="text-[#82C8E5]" />
           </div>
           <h3 className="text-3xl font-bold text-zinc-100">{data.totals.documents}</h3>
         </div>
         <div className="glass-card p-6 rounded-2xl relative overflow-hidden group">
           <div className="flex justify-between mb-4">
             <span className="text-sm text-zinc-400 font-medium">Storage Used</span>
-            <HardDrive size={20} className="text-cyan-400" />
+            <HardDrive size={20} className="text-[#82C8E5]" />
           </div>
           <h3 className="text-3xl font-bold text-zinc-100">{formatBytes(data.totals.storage_bytes)}</h3>
         </div>
@@ -115,7 +115,7 @@ export default function PersonalDashboard() {
         <div className="glass-card p-6 rounded-2xl relative overflow-hidden group">
           <div className="flex justify-between mb-4">
             <span className="text-sm text-zinc-400 font-medium">Recent AI Chats</span>
-            <MessageSquare size={20} className="text-indigo-400" />
+            <MessageSquare size={20} className="text-[#6D8196]" />
           </div>
           <h3 className="text-3xl font-bold text-zinc-100">5</h3>
         </div>

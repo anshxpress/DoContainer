@@ -4,7 +4,7 @@ import os
 from backend.app.core.app_mode import AppMode
 from backend.app.core.features import get_feature_flags
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "DOCSCOPE AI"
+    PROJECT_NAME: str = "DoContainer AI"
     API_V1_STR: str = "/api/v1"
     APP_MODE: str = Field(default="personal", env="APP_MODE")
     

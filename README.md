@@ -1,12 +1,12 @@
-# DOCSCOPE Personal AI Workspace
+# DoContainer Personal AI Workspace
 
 > A lightweight AI-powered personal document management system that helps users securely store, organize, search, summarize, and chat with their documents using semantic search, OCR, and Retrieval-Augmented Generation.
 
 ---
 
-## What is DOCSCOPE Personal?
+## What is DoContainer Personal?
 
-**DOCSCOPE Personal** is an AI-powered personal document workspace where a single user can:
+**DoContainer Personal** is an AI-powered personal document workspace where a single user can:
 
 - 📤 **Upload** documents (PDF, DOCX, images, and more)
 - 📁 **Organize** documents into folders with tags and favorites
@@ -22,7 +22,7 @@ Think of it as an **AI-powered personal Google Drive** — where you can ask que
 
 ## Editions
 
-DOCSCOPE ships from a single codebase with three editions controlled by the `APP_MODE` environment variable.
+DoContainer ships from a single codebase with three editions controlled by the `APP_MODE` environment variable.
 
 | Edition | `APP_MODE` | Status | Description |
 |---------|-----------|--------|-------------|
@@ -30,7 +30,7 @@ DOCSCOPE ships from a single codebase with three editions controlled by the `APP
 | **Team** | `team` | 🔲 Future | Shared workspace + collaboration |
 | **Enterprise** | `enterprise` | 🔲 Preserved | Full RBAC, ACL, Approvals, Audit, Monitoring |
 
-### DOCSCOPE Personal includes:
+### DoContainer Personal includes:
 - Document Upload & Folder Management
 - Adaptive OCR (scanned PDFs only)
 - Docling Parsing + Semantic Chunking
@@ -60,7 +60,7 @@ APP_MODE=enterprise
 
 ## Table of Contents
 
-- [What is DOCSCOPE Personal?](#what-is-docscope-personal)
+- [What is DoContainer Personal?](#what-is-DoContainer-personal)
 - [Editions](#editions)
 - [Tech Stack](#tech-stack)
 - [Repository Structure](#repository-structure)
@@ -99,7 +99,7 @@ APP_MODE=enterprise
 ## Repository Structure
 
 ```
-docscope/
+DoContainer/
 ├── backend/
 │   ├── app/
 │   │   ├── api/
@@ -166,13 +166,13 @@ Start all infrastructure services based on your preferred edition:
 
 **Personal Edition (Default)**
 ```powershell
-# From workspace root: d:\docscope
+# From workspace root: d:\DoContainer
 docker compose -f docker-compose.personal.yml up -d
 ```
 
 **Enterprise Edition**
 ```powershell
-# From workspace root: d:\docscope
+# From workspace root: d:\DoContainer
 docker compose -f docker-compose.enterprise.yml up -d
 ```
 
@@ -186,13 +186,13 @@ Expected healthy containers:
 
 | Container | Port | Purpose |
 |-----------|------|---------|
-| `docscope-db` | `5435` | PostgreSQL database |
-| `docscope-redis` | `6379` | Celery broker + result backend |
-| `docscope-qdrant` | `6333` | Vector database |
-| `docscope-minio` | `9000` / `9001` | Object storage (MinIO console on 9001) |
-| `docscope-clamav` | `3310` | Malware scanning daemon |
+| `DoContainer-db` | `5435` | PostgreSQL database |
+| `DoContainer-redis` | `6379` | Celery broker + result backend |
+| `DoContainer-qdrant` | `6333` | Vector database |
+| `DoContainer-minio` | `9000` / `9001` | Object storage (MinIO console on 9001) |
+| `DoContainer-clamav` | `3310` | Malware scanning daemon |
 
-> **Port conflicts?** If Redis (6379) or MinIO (9000) are already in use by another project, the docscope services will reuse the existing ones automatically — the default credentials (`minioadmin`/`minioadmin`, no Redis auth) are the same.
+> **Port conflicts?** If Redis (6379) or MinIO (9000) are already in use by another project, the DoContainer services will reuse the existing ones automatically — the default credentials (`minioadmin`/`minioadmin`, no Redis auth) are the same.
 
 ---
 
@@ -203,7 +203,7 @@ The backend runs **directly from your terminal** using the local Python virtual 
 #### First time only — create the virtual environment and install packages:
 
 ```powershell
-cd d:\docscope\backend
+cd d:\DoContainer\backend
 
 # Create venv (using uv — recommended)
 uv venv .venv
@@ -218,7 +218,7 @@ uv pip install -r requirements.txt
 #### Generate RSA key pair (first time only):
 
 ```powershell
-# From d:\docscope\backend
+# From d:\DoContainer\backend
 mkdir certs
 openssl genrsa -out certs/private_key.pem 2048
 openssl rsa -in certs/private_key.pem -pubout -out certs/public_key.pem
@@ -226,23 +226,23 @@ openssl rsa -in certs/private_key.pem -pubout -out certs/public_key.pem
 
 Or copy from root `certs/` folder if already generated:
 ```powershell
-Copy-Item d:\docscope\certs\* d:\docscope\backend\certs\
+Copy-Item d:\DoContainer\certs\* d:\DoContainer\backend\certs\
 ```
 
 #### Run database migrations:
 
 ```powershell
-# From d:\docscope\backend  (must be inside backend/)
-$env:PYTHONPATH = "d:\docscope"
+# From d:\DoContainer\backend  (must be inside backend/)
+$env:PYTHONPATH = "d:\DoContainer"
 .venv\Scripts\python.exe -m alembic upgrade head
 ```
 
 #### Start the backend server:
 
 ```powershell
-# From d:\docscope  (workspace root — REQUIRED for imports)
-$env:PYTHONPATH = "d:\docscope"
-d:\docscope\backend\.venv\Scripts\uvicorn.exe backend.app.main:app --host 0.0.0.0 --port 8001 --reload
+# From d:\DoContainer  (workspace root — REQUIRED for imports)
+$env:PYTHONPATH = "d:\DoContainer"
+d:\DoContainer\backend\.venv\Scripts\uvicorn.exe backend.app.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
 | URL | Description |
@@ -256,9 +256,9 @@ d:\docscope\backend\.venv\Scripts\uvicorn.exe backend.app.main:app --host 0.0.0.
 #### (Optional) Start the Celery worker for background ingestion tasks:
 
 ```powershell
-# From d:\docscope  (separate terminal window)
-$env:PYTHONPATH = "d:\docscope"
-d:\docscope\backend\.venv\Scripts\celery.exe -A backend.app.tasks.celery_app.celery_app worker --loglevel=info -Q default,ingestion-dlq
+# From d:\DoContainer  (separate terminal window)
+$env:PYTHONPATH = "d:\DoContainer"
+d:\DoContainer\backend\.venv\Scripts\celery.exe -A backend.app.tasks.celery_app.celery_app worker --loglevel=info -Q default,ingestion-dlq
 ```
 
 ---
@@ -266,7 +266,7 @@ d:\docscope\backend\.venv\Scripts\celery.exe -A backend.app.tasks.celery_app.cel
 ### 3. Start the Frontend
 
 ```powershell
-# From d:\docscope\frontend  (separate terminal window)
+# From d:\DoContainer\frontend  (separate terminal window)
 npm run dev
 ```
 
@@ -285,15 +285,15 @@ Create `backend/.env` to override any setting:
 
 ```env
 # Database
-DATABASE_URL=postgresql://postgres:postgres@localhost:5435/docscope
+DATABASE_URL=postgresql://postgres:postgres@localhost:5435/DoContainer
 
-# RSA Key Paths (relative to where uvicorn is run from — d:\docscope)
+# RSA Key Paths (relative to where uvicorn is run from — d:\DoContainer)
 RSA_PRIVATE_KEY_PATH=backend/certs/private_key.pem
 RSA_PUBLIC_KEY_PATH=backend/certs/public_key.pem
 
 # S3 / MinIO
 S3_ENDPOINT_URL=http://localhost:9000
-S3_BUCKET_NAME=docscope-storage
+S3_BUCKET_NAME=DoContainer-storage
 AWS_ACCESS_KEY_ID=minioadmin
 AWS_SECRET_ACCESS_KEY=minioadmin
 AWS_REGION=us-east-1
@@ -317,12 +317,12 @@ CLAMAV_PORT=3310
 Alembic manages all schema changes.
 
 ```powershell
-# Apply all pending migrations  (run from d:\docscope\backend)
-$env:PYTHONPATH = "d:\docscope"
+# Apply all pending migrations  (run from d:\DoContainer\backend)
+$env:PYTHONPATH = "d:\DoContainer"
 .venv\Scripts\python.exe -m alembic upgrade head
 
 # Generate a new migration after changing models.py
-$env:PYTHONPATH = "d:\docscope"
+$env:PYTHONPATH = "d:\DoContainer"
 .venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe_your_change"
 
 # Check current revision
@@ -369,17 +369,17 @@ Invoke-RestMethod -Uri "http://localhost:8001/api/v1/search" `
 ## Running Tests
 
 ```powershell
-# From d:\docscope  (workspace root)
-$env:PYTHONPATH = "d:\docscope"
+# From d:\DoContainer  (workspace root)
+$env:PYTHONPATH = "d:\DoContainer"
 
 # Run all tests
-d:\docscope\backend\.venv\Scripts\pytest backend\tests\ -v
+d:\DoContainer\backend\.venv\Scripts\pytest backend\tests\ -v
 
 # Run only Sprint 3 search tests
-d:\docscope\backend\.venv\Scripts\pytest backend\tests\test_search.py -v
+d:\DoContainer\backend\.venv\Scripts\pytest backend\tests\test_search.py -v
 
 # Run with coverage report
-d:\docscope\backend\.venv\Scripts\pytest backend\tests\ -v --tb=short
+d:\DoContainer\backend\.venv\Scripts\pytest backend\tests\ -v --tb=short
 ```
 
 **Current test status: 33/33 passing ✅**

@@ -156,7 +156,7 @@ def test_tenant_isolation(org_id: str, current_context: CurrentUserContext = Dep
 
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to DOCSCOPE Personal AI Workspace — Lightweight Document Intelligence API"}
+    return {"message": "Welcome to DoContainer Personal AI Workspace — Lightweight Document Intelligence API"}
 
 @app.get("/health", tags=["system"])
 def health_check():
@@ -164,7 +164,7 @@ def health_check():
     GET /health
     Basic health check endpoint for load balancers and orchestrators.
     """
-    return {"status": "ok", "service": "docscope-api"}
+    return {"status": "ok", "service": "DoContainer-api"}
 
 
 from fastapi import Request
@@ -172,7 +172,7 @@ from fastapi.responses import JSONResponse
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger = logging.getLogger("docscope")
+    logger = logging.getLogger("DoContainer")
     logger.exception(f"Unhandled error on {request.method} {request.url}", exc_info=exc)
     return JSONResponse(
         status_code=500,

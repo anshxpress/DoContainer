@@ -49,18 +49,18 @@ function StatCard({ title, value, change, icon: Icon }: StatCardProps) {
     <div className="glass-card p-6 rounded-2xl relative overflow-hidden group">
       <div className="flex items-center justify-between mb-4">
         <span className="text-sm text-zinc-400 font-medium">{title}</span>
-        <div className="p-2.5 rounded-xl bg-zinc-800/80 text-zinc-400 group-hover:text-emerald-400 group-hover:bg-emerald-500/10 transition-colors">
+        <div className="p-2.5 rounded-xl bg-zinc-800/80 text-zinc-400 group-hover:text-[#82C8E5] group-hover:bg-[#0047AB]/10 transition-colors">
           <Icon size={20} />
         </div>
       </div>
       <div className="space-y-1">
         <h3 className="text-3xl font-bold tracking-tight text-zinc-100">{value}</h3>
-        <p className="text-xs text-emerald-400 font-semibold flex items-center gap-1">
+        <p className="text-xs text-[#82C8E5] font-semibold flex items-center gap-1">
           {change} <span className="text-zinc-500 font-normal">vs last month</span>
         </p>
       </div>
       {/* Decorative background glow */}
-      <div className="absolute -right-6 -bottom-6 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl group-hover:bg-emerald-500/10 transition-all duration-300" />
+      <div className="absolute -right-6 -bottom-6 w-24 h-24 bg-[#0047AB]/5 rounded-full blur-2xl group-hover:bg-[#0047AB]/10 transition-all duration-300" />
     </div>
   );
 }
@@ -151,7 +151,7 @@ export default function Dashboard() {
   }, []);
 
   const folders = [
-    { id: "1", name: "Financial Audits", items: "12 files", color: "from-emerald-500/20 to-teal-500/20" },
+    { id: "1", name: "Financial Audits", items: "12 files", color: "from-[#0047AB]/15 to-[#0047AB]/8" },
     { id: "2", name: "Legal Contracts", items: "8 files", color: "from-blue-500/20 to-indigo-500/20" },
     { id: "3", name: "Engineering Specs", items: "24 files", color: "from-purple-500/20 to-pink-500/20" },
   ];
@@ -222,7 +222,7 @@ export default function Dashboard() {
             Workspace Overview
           </h1>
           <p className="text-sm text-zinc-400">
-            Welcome back to <span className="text-emerald-400 font-semibold">DoContainer Inc</span>. Monitor your document operations.
+            Welcome back to <span className="text-[#82C8E5] font-semibold">DoContainer Inc</span>. Monitor your document operations.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -232,7 +232,7 @@ export default function Dashboard() {
           </button>
           <Link 
             href="/dashboard/upload" 
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-lg shadow-emerald-600/15 transition-all duration-200"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#0047AB] hover:bg-[#1a5fc4] text-white text-xs font-semibold shadow-lg shadow-[#0047AB]/25 transition-all duration-200"
           >
             <Plus size={16} />
             <span>Upload Document</span>
@@ -257,7 +257,7 @@ export default function Dashboard() {
               <h3 className="font-semibold text-zinc-200 text-base">API Token Consumption</h3>
               <p className="text-xs text-zinc-500">Gemini LLM tokens consumed over last 7 days</p>
             </div>
-            <TrendingUp size={20} className="text-emerald-400" />
+            <TrendingUp size={20} className="text-[#82C8E5]" />
           </div>
           <div className="h-[280px] w-full">
             {mounted ? (
@@ -293,7 +293,7 @@ export default function Dashboard() {
               <h3 className="font-semibold text-zinc-200 text-base">Storage Breakdown</h3>
               <p className="text-xs text-zinc-500">Resource counts by format type</p>
             </div>
-            <HardDrive size={20} className="text-cyan-400" />
+            <HardDrive size={20} className="text-[#82C8E5]" />
           </div>
           <div className="h-[280px] w-full flex flex-col justify-between items-center">
             {mounted ? (
@@ -346,7 +346,7 @@ export default function Dashboard() {
               <h3 className="font-semibold text-zinc-200 text-base">Ingestion Pipeline Activity</h3>
               <p className="text-xs text-zinc-500">Rendered document pages count per day</p>
             </div>
-            <Cpu size={20} className="text-indigo-400" />
+            <Cpu size={20} className="text-[#6D8196]" />
           </div>
           <div className="h-[240px] w-full">
             {mounted ? (
@@ -390,7 +390,7 @@ export default function Dashboard() {
               )}
             </div>
           </div>
-          <Link href="/dashboard/admin" className="text-xs text-emerald-400 hover:underline flex items-center justify-center gap-1 pt-4 border-t border-white/5">
+          <Link href="/dashboard/admin" className="text-xs text-[#82C8E5] hover:underline flex items-center justify-center gap-1 pt-4 border-t border-white/5">
             <span>View Security Matrix</span>
             <ArrowUpRight size={14} />
           </Link>

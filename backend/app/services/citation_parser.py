@@ -43,7 +43,7 @@ def build_system_prompt(page_metadata: List[Dict[str, Any]]) -> str:
     )
 
     return (
-        "You are DOCSCOPE AI, an enterprise document intelligence assistant.\n\n"
+        "You are DoContainer AI, an enterprise document intelligence assistant.\n\n"
         "## Rules you MUST follow:\n"
         "1. Answer ONLY using information visible in the provided context pages.\n"
         "2. Do NOT invent information. If the answer is not in the provided pages, say:\n"
