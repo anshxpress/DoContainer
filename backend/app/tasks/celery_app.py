@@ -14,6 +14,22 @@ from backend.app.core.telemetry import instrument_celery
 instrument_celery()
 
 
+from backend.app.core.config import features
+
+base_task_routes = {
+    "backend.app.tasks.ocr_tasks.ocr_task": {"queue": "ocr-pipeline"},
+    "backend.app.tasks.ocr_tasks.docling_parse_task": {"queue": "ocr-pipeline"},
+    "backend.app.tasks.ocr_tasks.bge_embed_task": {"queue": "embed-pipeline"},
+    "backend.app.tasks.ocr_tasks.metadata_enrichment_task": {"queue": "metadata-pipeline"},
+    "backend.app.tasks.tasks.dlq_handler": {"queue": "ingestion-dlq"},
+    "backend.app.tasks.tasks.*": {"queue": "default"},
+}
+
+if features.ENABLE_KNOWLEDGE_GRAPH:
+    base_task_routes["backend.app.tasks.knowledge_graph_tasks.*"] = {"queue": "default"}
+if features.ENABLE_ACL:
+    base_task_routes["backend.app.tasks.retention_tasks.*"] = {"queue": "default"}
+
 # Configure Celery settings
 celery_app.conf.update(
     task_serializer="json",
@@ -24,15 +40,7 @@ celery_app.conf.update(
     task_track_started=True,
     task_time_limit=3600, # 1 hour max time limit
     task_default_queue="default",
-    task_routes={
-        "backend.app.tasks.tasks.dlq_handler": {"queue": "ingestion-dlq"},
-        "backend.app.tasks.tasks.*": {"queue": "default"},
-        "backend.app.tasks.knowledge_graph_tasks.*": {"queue": "default"},
-        "backend.app.tasks.ocr_tasks.ocr_task": {"queue": "ocr-pipeline"},
-        "backend.app.tasks.ocr_tasks.docling_parse_task": {"queue": "ocr-pipeline"},
-        "backend.app.tasks.ocr_tasks.bge_embed_task": {"queue": "embed-pipeline"},
-        "backend.app.tasks.ocr_tasks.metadata_enrichment_task": {"queue": "metadata-pipeline"},
-    },
+    task_routes=base_task_routes,
     worker_prefetch_multiplier=1,
     task_acks_late=True,
     worker_max_tasks_per_child=10,
@@ -109,6 +117,6 @@ def task_failure_handler(task_id, exception, args, kwargs, traceback, einfo, *ta
 celery_app.autodiscover_tasks(["backend.app.tasks"])
 import backend.app.tasks.partition_tasks
 import backend.app.tasks.ocr_tasks
-import backend.app.tasks.knowledge_graph_tasks
 
-
+if features.ENABLE_KNOWLEDGE_GRAPH:
+    import backend.app.tasks.knowledge_graph_tasks

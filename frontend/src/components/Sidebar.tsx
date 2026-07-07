@@ -18,16 +18,17 @@ import {
   FileSearch2,
   Star,
   Clock,
-  // ─── Enterprise Feature Icons (Disabled in Personal Edition) ───────────────
-  // ShieldAlert,   // Admin
-  // BarChart3,     // Analytics
-  // Activity,      // Processing / Monitoring
-  // CheckCircle,   // Approvals
-  // Bell,          // Notifications
-  // Users,         // Teams
-  // Building2,     // Organizations
+  // ─── Enterprise Feature Icons ───────────────
+  ShieldAlert,   // Admin
+  BarChart3,     // Analytics
+  Activity,      // Processing / Monitoring
+  CheckCircle,   // Approvals
+  Bell,          // Notifications
+  Users,         // Teams
+  Building2,     // Organizations
   // ─────────────────────────────────────────────────────────────────────────
 } from "lucide-react";
+import { features } from "../config/appMode";
 
 export interface NavItem {
   name: string;
@@ -35,10 +36,6 @@ export interface NavItem {
   icon: React.ComponentType<any>;
 }
 
-// ─── Personal Edition Navigation ──────────────────────────────────────────────
-// Only core personal features are listed here.
-// Enterprise items are preserved below in comments and can be restored by
-// uncommenting them and adding them back to navItems[].
 const navItems: NavItem[] = [
   { name: "Dashboard",  href: "/dashboard",           icon: LayoutDashboard },
   { name: "Documents",  href: "/dashboard/documents", icon: FileSearch2 },
@@ -47,20 +44,31 @@ const navItems: NavItem[] = [
   { name: "AI Chat",    href: "/dashboard/chat",      icon: MessageSquare },
   { name: "Favorites",  href: "/dashboard/favorites", icon: Star },
   { name: "Recent",     href: "/dashboard/recent",    icon: Clock },
-  { name: "Settings",   href: "/dashboard/settings",  icon: Settings },
 ];
 
-// ─── Enterprise Feature Navigation (Disabled in Personal Edition) ─────────────
-// Restore these by adding them back into navItems[] above.
-//
-// { name: "Approvals",    href: "/dashboard/approvals",  icon: CheckCircle },
-// { name: "Processing",   href: "/dashboard/processing", icon: Activity },
-// { name: "Admin",        href: "/dashboard/admin",      icon: ShieldAlert },
-// { name: "Analytics",    href: "/dashboard",            icon: BarChart3 },
-// { name: "Teams",        href: "/dashboard/teams",      icon: Users },
-// { name: "Organizations",href: "/dashboard/org",        icon: Building2 },
-// { name: "Notifications",href: "/dashboard/notifications", icon: Bell },
-// ─────────────────────────────────────────────────────────────────────────────
+if (features.ENABLE_APPROVAL) {
+  navItems.push({ name: "Approvals", href: "/dashboard/approvals", icon: CheckCircle });
+}
+if (features.ENABLE_MONITORING) {
+  navItems.push({ name: "Processing", href: "/dashboard/processing", icon: Activity });
+}
+if (features.ENABLE_AUDIT) {
+  navItems.push({ name: "Admin", href: "/dashboard/admin", icon: ShieldAlert });
+}
+if (features.ENABLE_ANALYTICS) {
+  navItems.push({ name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 });
+}
+if (features.ENABLE_TEAM) {
+  navItems.push({ name: "Teams", href: "/dashboard/teams", icon: Users });
+}
+if (features.ENABLE_ORGANIZATION) {
+  navItems.push({ name: "Organizations", href: "/dashboard/org", icon: Building2 });
+}
+if (features.ENABLE_NOTIFICATIONS) {
+  navItems.push({ name: "Notifications", href: "/dashboard/notifications", icon: Bell });
+}
+
+navItems.push({ name: "Settings", href: "/dashboard/settings", icon: Settings });
 
 export default function Sidebar() {
   const pathname = usePathname();

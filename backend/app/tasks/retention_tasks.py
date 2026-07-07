@@ -12,7 +12,7 @@ from backend.app.core.db import SessionLocal
 from backend.app.models.models import Document, RetentionPolicy
 from backend.app.core.s3 import s3_storage
 from backend.app.core.qdrant import qdrant_client
-from backend.app.core.config import settings
+from backend.app.core.config import settings, features
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,10 @@ def apply_retention_policies() -> dict:
     If auto_delete is True, the document and its S3/Qdrant assets are deleted.
     If False, the document is archived (is_archived = True).
     """
+    if not features.ENABLE_ACL:
+        logger.info("[retention] Skipped retention policy sweep because ACL is disabled.")
+        return {"status": "skipped"}
+
     logger.info("[retention] Starting retention policy sweep...")
     db = SessionLocal()
     processed_count = 0

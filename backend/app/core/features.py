@@ -27,7 +27,7 @@ class FeatureFlags(BaseModel):
 def get_feature_flags(mode: AppMode) -> FeatureFlags:
     if mode == AppMode.PERSONAL:
         return FeatureFlags(
-            ENABLE_VERSIONING=False,
+            ENABLE_VERSIONING=True,
             ENABLE_APPROVAL=False,
             ENABLE_ACL=False,
             ENABLE_TEAM=False,

@@ -8,6 +8,7 @@ from backend.app.core.db import SessionLocal
 from backend.app.models.models import Document, DocumentEntity, KnowledgeGraphEdge, DocumentSummary
 from backend.app.services.bge_service import get_bge_service
 from backend.app.core.qdrant import search_text_chunks
+from backend.app.core.config import features
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,10 @@ def build_knowledge_graph_task(self, document_id: str) -> Dict[str, Any]:
     Automated task to link a newly ingested document to existing documents
     in the Knowledge Graph based on shared entities and vector similarity.
     """
+    if not features.ENABLE_KNOWLEDGE_GRAPH:
+        logger.info(f"[build_knowledge_graph_task] Skipped for document {document_id} because Knowledge Graph is disabled.")
+        return {"status": "skipped"}
+
     logger.info(f"[build_knowledge_graph_task] Starting for document {document_id}")
     db = SessionLocal()
     edges_created = 0
