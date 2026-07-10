@@ -95,7 +95,7 @@ class Settings(BaseSettings):
     ENABLE_OCR: bool = Field(default=True, env="ENABLE_OCR")
     ENABLE_VISION: bool = Field(default=True, env="ENABLE_VISION")
     ENABLE_RERANKER: bool = Field(default=False, env="ENABLE_RERANKER")
-    ENABLE_CLAMAV: bool = Field(default=True, env="ENABLE_CLAMAV")
+    ENABLE_CLAMAV: bool = Field(default=False, env="ENABLE_CLAMAV")
 
     # Telemetry Settings
     OTEL_CONSOLE_EXPORT: bool = Field(default=False, env="OTEL_CONSOLE_EXPORT")

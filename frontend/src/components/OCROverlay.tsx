@@ -1,4 +1,7 @@
+"use client";
+
 import React, { useState } from 'react';
+
 import { Eye, EyeOff, FileText, CheckCircle2 } from 'lucide-react';
 
 export interface OcrChunk {

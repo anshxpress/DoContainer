@@ -48,7 +48,7 @@ export default function LoginPage() {
 
   // If already logged in, redirect straight to dashboard
   useEffect(() => {
-    const token = localStorage.getItem("DoContainer_token");
+    const token = localStorage.getItem("docscope_token");
     if (token) router.push("/dashboard");
   }, [router]);
 
@@ -80,7 +80,7 @@ export default function LoginPage() {
       const data = await resp.json();
       if (!resp.ok)
         throw new Error(data.detail || "Authentication failed. Please check credentials.");
-      localStorage.setItem("DoContainer_token", data.access_token);
+      localStorage.setItem("docscope_token", data.access_token);
       router.push("/dashboard");
     } catch (err: any) {
       setError(err.message || "Something went wrong. Please try again.");

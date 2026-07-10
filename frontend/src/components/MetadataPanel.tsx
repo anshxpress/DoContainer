@@ -1,4 +1,7 @@
+"use client";
+
 import React from 'react';
+
 import { Tag, Building, Clock, FileType, AlignLeft, Hash } from 'lucide-react';
 
 export interface Keyword {

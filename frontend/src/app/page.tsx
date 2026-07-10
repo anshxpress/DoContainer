@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+
 import {
   FileSearch2,
   MessageSquare,
@@ -228,11 +231,8 @@ export default function LandingPage() {
 
             <div className="border-t border-white/5 pt-8">
               <p className="text-zinc-300 text-sm leading-relaxed max-w-3xl">
-                <span className="font-semibold text-[#82C8E5]">DoContainer solves this</span> by
-                converting every uploaded document into an intelligent knowledge asset — parsed,
-                embedded, and immediately searchable in plain English. Scanned documents are
-                automatically OCR&rsquo;d. Digital PDFs go straight to semantic indexing.
-                You ask a question. DoContainer finds the answer.
+                <span className="font-semibold text-[#82C8E5]">DoContainer solves this</span>
+                {" by converting every uploaded document into an intelligent knowledge asset — parsed, embedded, and immediately searchable in plain English. Scanned documents are automatically OCR'd. Digital PDFs go straight to semantic indexing. You ask a question. DoContainer finds the answer."}
               </p>
             </div>
           </div>

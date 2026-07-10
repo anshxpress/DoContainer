@@ -200,25 +200,28 @@ async def _sse_chat_stream(
         db.add(assistant_msg)
         db.commit()
 
-        # Log API tokens usage metric
+        # Log API tokens usage metric (enterprise analytics feature)
         try:
-            input_chars = len(query) + 2000
-            for h in history:
-                input_chars += len(h.get("content", ""))
-            input_tokens = max(1, input_chars // 4)
-            output_tokens = max(1, len(full_response) // 4)
-            total_tokens = input_tokens + output_tokens
+            from backend.app.core.config import features as _feat_chat
+            if _feat_chat.ENABLE_ANALYTICS:
+                input_chars = len(query) + 2000
+                for h in history:
+                    input_chars += len(h.get("content", ""))
+                input_tokens = max(1, input_chars // 4)
+                output_tokens = max(1, len(full_response) // 4)
+                total_tokens = input_tokens + output_tokens
 
-            from backend.app.services.metrics_service import log_usage_metric
-            log_usage_metric(
-                db=db,
-                org_id=uuid.UUID(str(org_id)) if isinstance(org_id, str) else org_id,
-                metric_type="api_tokens",
-                value=float(total_tokens),
-                metadata={"session_id": str(session.id), "input_tokens": input_tokens, "output_tokens": output_tokens}
-            )
+                from backend.app.services.metrics_service import log_usage_metric
+                log_usage_metric(
+                    db=db,
+                    org_id=uuid.UUID(str(org_id)) if isinstance(org_id, str) else org_id,
+                    metric_type="api_tokens",
+                    value=float(total_tokens),
+                    metadata={"session_id": str(session.id), "input_tokens": input_tokens, "output_tokens": output_tokens}
+                )
         except Exception as metric_err:
             logger.warning("Failed to log token usage metric in chat: %s", metric_err)
+
     except Exception as exc:
         logger.error("Failed to persist assistant message: %s", exc)
 

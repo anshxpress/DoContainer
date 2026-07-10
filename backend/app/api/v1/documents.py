@@ -104,7 +104,7 @@ def upload_document(
     t0_db = time.time()
     doc_in = {
         "id": doc_id,
-        "org_id": uuid.UUID(current_context.org_id),
+        "org_id": uuid.UUID(str(current_context.org_id)),
         "folder_id": folder_uuid,
         "name": file.filename,
         "storage_path": s3_key,
@@ -125,7 +125,7 @@ def upload_document(
             s3_key=s3_key,
             file_size=file_size,
             file_hash=file_hash,
-            uploader_id=uuid.UUID(current_context.user.id),
+            uploader_id=uuid.UUID(str(current_context.user.id)),
             change_note="Initial upload"
         )
         db.add(initial_version)
@@ -135,7 +135,7 @@ def upload_document(
         from backend.app.services.metrics_service import log_usage_metric
         log_usage_metric(
             db,
-            org_id=uuid.UUID(current_context.org_id),
+            org_id=uuid.UUID(str(current_context.org_id)),
             metric_type="storage_bytes",
             value=float(file_size),
             metadata={"document_id": str(doc_id)}
@@ -247,15 +247,17 @@ def update_document(
     if not check_document_permission(db, str(doc_id), current_context, "write"):
         raise HTTPException(status_code=403, detail="Access denied: write permission required.")
 
-    # Check lock
-    from datetime import datetime, timezone
-    lock = db.query(DocumentLock).filter(DocumentLock.document_id == doc_id).first()
-    if lock and lock.expires_at.replace(tzinfo=timezone.utc) > datetime.now(timezone.utc):
-        if lock.locked_by != uuid.UUID(current_context.user.id):
-            raise HTTPException(
-                status_code=status.HTTP_423_LOCKED,
-                detail="Document is currently locked by another user."
-            )
+    # Check lock (enterprise versioning feature only)
+    from backend.app.core.config import features as _feat_patch
+    if _feat_patch.ENABLE_VERSIONING:
+        from datetime import datetime, timezone
+        lock = db.query(DocumentLock).filter(DocumentLock.document_id == doc_id).first()
+        if lock and lock.expires_at.replace(tzinfo=timezone.utc) > datetime.now(timezone.utc):
+            if lock.locked_by != uuid.UUID(current_context.user.id):
+                raise HTTPException(
+                    status_code=status.HTTP_423_LOCKED,
+                    detail="Document is currently locked by another user."
+                )
 
     obj_in = payload.model_dump(exclude_unset=True)
     updated_doc = document_repo.update(db, db_obj=db_doc, obj_in=obj_in)
@@ -371,15 +373,17 @@ def delete_document(
     if not check_document_permission(db, str(doc_id), current_context, "write"):
         raise HTTPException(status_code=403, detail="Access denied: write permission required.")
 
-    # Check lock
-    from datetime import datetime, timezone
-    lock = db.query(DocumentLock).filter(DocumentLock.document_id == doc_id).first()
-    if lock and lock.expires_at.replace(tzinfo=timezone.utc) > datetime.now(timezone.utc):
-        if lock.locked_by != uuid.UUID(current_context.user.id):
-            raise HTTPException(
-                status_code=status.HTTP_423_LOCKED,
-                detail="Document is currently locked by another user."
-            )
+    # Check lock (enterprise only -- gate behind ENABLE_VERSIONING)
+    from backend.app.core.config import features as _feat_del
+    if _feat_del.ENABLE_VERSIONING:
+        from datetime import datetime, timezone
+        lock = db.query(DocumentLock).filter(DocumentLock.document_id == doc_id).first()
+        if lock and lock.expires_at.replace(tzinfo=timezone.utc) > datetime.now(timezone.utc):
+            if lock.locked_by != uuid.UUID(current_context.user.id):
+                raise HTTPException(
+                    status_code=status.HTTP_423_LOCKED,
+                    detail="Document is currently locked by another user."
+                )
 
     # 1. Delete matching S3 objects
     try:
@@ -671,6 +675,11 @@ def get_related_documents(
     db_doc = document_repo.get(db, id=doc_id)
     if not db_doc or str(db_doc.org_id) != current_context.org_id:
         raise HTTPException(status_code=404, detail="Document not found.")
+
+    from backend.app.core.config import features as _feat_rel
+    # Knowledge Graph is an enterprise feature; return empty in Personal mode
+    if not _feat_rel.ENABLE_KNOWLEDGE_GRAPH:
+        return []
 
     edges = db.query(KnowledgeGraphEdge).filter(
         KnowledgeGraphEdge.source_document_id == doc_id
@@ -1032,6 +1041,36 @@ def get_document_timeline(
     GET /api/v1/documents/{doc_id}/timeline
     Returns a chronological timeline of document events (creation, versions, processing, interactions).
     """
+    """
+    GET /api/v1/documents/{doc_id}/related
+    Retrieves documents related to this one via the Knowledge Graph.
+    """
+    from backend.app.core.config import features as _feat_rel
+    # Knowledge Graph is an enterprise feature; return empty in Personal mode
+    if not _feat_rel.ENABLE_KNOWLEDGE_GRAPH:
+        return []
+
+    # Verify access to source document
+    db_doc = document_repo.get(db, id=doc_id)
+    if not db_doc or str(db_doc.org_id) != current_context.org_id:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    edges = db.query(KnowledgeGraphEdge).filter(
+        KnowledgeGraphEdge.source_document_id == doc_id
+    ).order_by(KnowledgeGraphEdge.weight.desc()).limit(limit).all()
+    
+    response = []
+    for edge in edges:
+        target_doc = document_repo.get(db, id=edge.target_document_id)
+        if target_doc:
+            response.append({
+                "document": target_doc,
+                "relationship_type": edge.relationship_type,
+                "weight": edge.weight
+            })
+            
+    return response
+
     db_doc = document_repo.get(db, id=doc_id)
     if not db_doc or str(db_doc.org_id) != current_context.org_id:
         raise HTTPException(status_code=404, detail="Document not found.")

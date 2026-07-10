@@ -224,7 +224,7 @@ export default function Sidebar() {
                 <div className="h-px bg-white/5 my-1.5" />
                 <button 
                   onClick={() => {
-                    localStorage.removeItem("DoContainer_token");
+                    localStorage.removeItem("docscope_token");
                     window.location.href = "/login";
                   }}
                   className="w-full flex items-center gap-2.5 px-2.5 py-2 text-xs text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"

@@ -121,24 +121,37 @@ def check_document_permission(
     """
     Returns True if the user has *permission* for the given document, evaluated as:
       1. Org Admin / Super Admin -> always True
-      2. Org-level RBAC permission present -> True
-      3. Document-level ACL entry -> True
-      4. Otherwise -> False
+      2. Personal mode (ACL disabled) -> True if document belongs to user's org
+      3. Org-level RBAC permission present -> True
+      4. Document-level ACL entry -> True
+      5. Otherwise -> False
 
     Callers should raise HTTP 403 if False.
     """
     import uuid as _uuid
-    from backend.app.models.models import DocumentACL, TeamMembership
+    from backend.app.core.config import features
 
     # Admins bypass everything
     if current_context.role_name in ("Super Admin", "Organization Admin"):
         return True
+
+    # ── Personal mode shortcircuit ──────────────────────────────────────────
+    # In Personal mode, ACL / team-based checks are disabled.
+    # Grant access if the document belongs to the user's organisation.
+    if not features.ENABLE_ACL:
+        from backend.app.models.models import Document
+        doc_uuid = _uuid.UUID(str(document_id))
+        doc = db.query(Document).filter(Document.id == doc_uuid).first()
+        if doc and str(doc.org_id) == current_context.org_id:
+            return True
+        return False
 
     # Org-level permission check
     if permission in current_context.permissions:
         return True
 
     # Document ACL check
+    from backend.app.models.models import DocumentACL, TeamMembership
     doc_uuid = _uuid.UUID(str(document_id))
     user_uuid = current_context.user.id
 
@@ -161,6 +174,7 @@ def check_document_permission(
         user_team_ids=team_ids,
         user_role_id=role_id,
     )
+
 
 
 def get_document_or_404(db: Session, document_id: str, org_id: str):

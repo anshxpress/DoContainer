@@ -1,4 +1,7 @@
+"use client";
+
 import React from 'react';
+
 import { Bot, Search, Image as ImageIcon, Type, Activity } from 'lucide-react';
 
 export type SearchMode = 'hybrid' | 'vision' | 'text' | 'keyword';

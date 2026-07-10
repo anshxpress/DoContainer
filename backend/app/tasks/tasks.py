@@ -3,11 +3,25 @@ import tempfile
 import subprocess
 import shutil
 import logging
-import clamd
 import uuid
 import time
 from typing import Dict, Any, List, Optional
-from pdf2image import convert_from_path
+
+# Optional heavy dependencies — only import if installed
+try:
+    import clamd
+    _CLAMD_AVAILABLE = True
+except ImportError:
+    clamd = None  # type: ignore[assignment]
+    _CLAMD_AVAILABLE = False
+
+try:
+    from pdf2image import convert_from_path
+    _PDF2IMAGE_AVAILABLE = True
+except ImportError:
+    convert_from_path = None  # type: ignore[assignment]
+    _PDF2IMAGE_AVAILABLE = False
+
 from PIL import Image
 
 from backend.app.tasks.celery_app import celery_app
@@ -122,14 +136,19 @@ def scan_malware_task(self, document_id: str, s3_key: str) -> Dict[str, Any]:
 
         # Perform virus check via ClamAV clamd daemon
         try:
-            t0 = time.time()
-            cd = clamd.ClamdNetworkSocket(host=settings.CLAMAV_HOST, port=settings.CLAMAV_PORT)
-            cd.ping()
-            scan_result = cd.scan_stream(file_bytes)
-            logger.info(f"ClamAV scan took {time.time() - t0:.2f}s")
+            if _CLAMD_AVAILABLE:
+                t0 = time.time()
+                cd = clamd.ClamdNetworkSocket(host=settings.CLAMAV_HOST, port=settings.CLAMAV_PORT)
+                cd.ping()
+                scan_result = cd.scan_stream(file_bytes)
+                logger.info(f"ClamAV scan took {time.time() - t0:.2f}s")
+            else:
+                logger.warning("clamd not installed — skipping AV scan, treating file as clean.")
+                scan_result = {"stream": ("OK", None)}
         except Exception as e:
             logger.warning(f"ClamAV daemon connection failed: {e}. Falling back to default clean result for development.")
             scan_result = {"stream": ("OK", None)}
+
 
         # Parse scan result
         if scan_result and "stream" in scan_result:

@@ -145,14 +145,18 @@ if features.ENABLE_NOTIFICATIONS:
 from backend.app.api.deps import get_current_user_context, CurrentUserContext
 from fastapi import Depends, HTTPException, status
 
-@app.get(f"{settings.API_V1_STR}/tenant-test/{{org_id}}")
-def test_tenant_isolation(org_id: str, current_context: CurrentUserContext = Depends(get_current_user_context)):
-    if current_context.org_id != org_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied: Cross-tenant request rejected."
-        )
-    return {"message": "Access granted", "org_id": org_id}
+
+# ─── Tenant Isolation Test (Enterprise/Team mode only) ──────────────────────
+if features.ENABLE_ORGANIZATION:
+    @app.get(f"{settings.API_V1_STR}/tenant-test/{{org_id}}")
+    def test_tenant_isolation(org_id: str, current_context: CurrentUserContext = Depends(get_current_user_context)):
+        if current_context.org_id != org_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Cross-tenant request rejected."
+            )
+        return {"message": "Access granted", "org_id": org_id}
+
 
 @app.get("/")
 def read_root():

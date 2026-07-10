@@ -45,6 +45,8 @@ def get_aggregated_metrics(db: Session, org_id: uuid.UUID) -> Dict[str, Any]:
     Day 3: Fetch analytics details from the database.
     Gathers totals and trend lines for Next.js dashboard widgets.
     """
+    from backend.app.core.config import features
+
     # 1. Total Documents
     total_docs = db.query(func.count(Document.id)).filter(Document.org_id == org_id).scalar() or 0
 
@@ -63,28 +65,34 @@ def get_aggregated_metrics(db: Session, org_id: uuid.UUID) -> Dict[str, Any]:
         .filter(UsageMetric.org_id == org_id, UsageMetric.metric_type == "api_tokens")\
         .scalar() or 0.0
 
-    # 5. Active User Count (distinct users performing actions in audit log in the last 30 days)
-    since_30_days = datetime.now(timezone.utc) - timedelta(days=30)
-    active_users = db.query(func.count(func.distinct(AuditLog.user_id)))\
-        .filter(AuditLog.org_id == org_id, AuditLog.created_at >= since_30_days)\
-        .scalar() or 0
+    # 5. Active User Count — only if audit is enabled
+    if features.ENABLE_AUDIT:
+        since_30_days = datetime.now(timezone.utc) - timedelta(days=30)
+        active_users = db.query(func.count(func.distinct(AuditLog.user_id)))\
+            .filter(AuditLog.org_id == org_id, AuditLog.created_at >= since_30_days)\
+            .scalar() or 0
+    else:
+        active_users = 1  # Personal mode: single user
 
-    # 6. Recent Audits
-    recent_audits_query = db.query(AuditLog, User.email)\
-        .outerjoin(User, User.id == AuditLog.user_id)\
-        .filter(AuditLog.org_id == org_id)\
-        .order_by(AuditLog.created_at.desc())\
-        .limit(5)\
-        .all()
-    
-    recent_audits_list = []
-    for audit, email in recent_audits_query:
-        # Convert created_at relative description or simple format
-        recent_audits_list.append({
-            "action": audit.action,
-            "user": email or "system_admin",
-            "time": audit.created_at.isoformat()
-        })
+    # 6. Recent Audits — only if audit is enabled
+    if features.ENABLE_AUDIT:
+        recent_audits_query = db.query(AuditLog, User.email)\
+            .outerjoin(User, User.id == AuditLog.user_id)\
+            .filter(AuditLog.org_id == org_id)\
+            .order_by(AuditLog.created_at.desc())\
+            .limit(5)\
+            .all()
+        
+        recent_audits_list = []
+        for audit, email in recent_audits_query:
+            recent_audits_list.append({
+                "action": audit.action,
+                "user": email or "system_admin",
+                "time": audit.created_at.isoformat()
+            })
+    else:
+        recent_audits_list = []
+
 
     # 7. Trends data (last 7 days of daily totals for Recharts charts)
     today = datetime.now(timezone.utc).date()

@@ -35,7 +35,12 @@ def log_audit_event_task(
 ) -> None:
     """
     Day 2: Log audit actions to the database asynchronously.
+    Skipped in Personal mode (ENABLE_AUDIT=False).
     """
+    from backend.app.core.config import features
+    if not features.ENABLE_AUDIT:
+        return  # Audit logging disabled in Personal mode
+
     logger.info(f"Logging audit event: {action} by user {user_id_str}")
     db = SessionLocal()
     try:
@@ -72,4 +77,5 @@ def log_audit_event_task(
         db.rollback()
     finally:
         db.close()
+
 

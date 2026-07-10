@@ -1,6 +1,5 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
-@import url('https://api.fontshare.com/v2/css?f[]=clash-grotesk@400,500,600,700&display=swap');
 
 /* ─── Cobalt Sky Palette ─────────────────────────────────────────────────────
    Primary    #0047AB  Cobalt blue
